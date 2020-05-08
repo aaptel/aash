@@ -347,17 +347,18 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 }
 
 
-struct exec_result {
+struct exec_context {
 	int status;
 	pid_t pid;
 };
 
 #define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
 
-void exec_expr(struct expr *e, struct exec_result *res)
+void exec_expr(struct expr *e, struct exec_context *res)
 {
 	int i;
-	pid_t rc;
+	pid_t rcpid;
+	int rc;
 
 	assert(e);
 
@@ -380,8 +381,8 @@ void exec_expr(struct expr *e, struct exec_result *res)
 			exit(1);
 		}
 
-		rc = waitpid(res->pid, &res->status, 0);
-		if (rc < 0)
+		rcpid = waitpid(res->pid, &res->status, 0);
+		if (rcpid < 0)
 			E("waitpid");
 		break;
 	case EXPR_AND:
@@ -409,6 +410,62 @@ void exec_expr(struct expr *e, struct exec_result *res)
 		exec_expr(e->not.expr, res);
 		res->status = FAILED(res->status) ? 0 : 1;
 		break;
+	case EXPR_PIPE:
+	{
+		int pipefd[2];
+		pid_t left, right;
+
+		rc = pipe(pipefd);
+		if (rc < 0)
+			E("pipe");
+
+		left = fork();
+		if (left < 0)
+			E("fork");
+
+		if (left == 0) {
+			dup2(pipefd[1], 1);
+			close(pipefd[0]);
+			close(pipefd[1]);
+			exec_expr(e->and_or.left, res);
+			exit(FAILED(res->status) ? 1 : 0);
+		}
+
+		right = fork();
+		if (right < 0)
+			E("fork");
+
+		if (right == 0) {
+			dup2(pipefd[0], 0);
+			close(pipefd[0]);
+			close(pipefd[1]);
+			exec_expr(e->and_or.right, res);
+			exit(FAILED(res->status) ? 1 : 0);
+		}
+
+		close(pipefd[0]);
+		close(pipefd[1]);
+		rcpid = waitpid(right, &res->status, 0);
+		if (rcpid < 0)
+			E("waitpid");
+		break;
+	}
+	case EXPR_SUB:
+	{
+		pid_t child = fork();
+		if (child < 0)
+			E("fork");
+
+		if (child == 0) {
+			exec_expr(e->sub.expr, res);
+			exit(FAILED(res->status) ? 1 : 0);
+		}
+
+		rcpid = waitpid(child, &res->status, 0);
+		if (rcpid < 0)
+			E("waitpid");
+		break;
+	}
 	default:
 		E("TODO");
 	}
@@ -442,7 +499,7 @@ int main(void)
 
 	printf("=== RUNNING ===\n");
 
-	struct exec_result res;
+	struct exec_context res;
 	exec_expr(root, &res);
 	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
 
