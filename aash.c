@@ -1,0 +1,380 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "dbg.h"
+#include "ast.h"
+
+struct pos {
+	size_t line, col;
+};
+
+struct str {
+	enum token_type type;
+	char *s;
+	size_t size;
+	size_t capa;
+};
+
+struct input {
+	FILE *fh;
+	bool eof;
+	size_t nb_eof;
+
+	/* XXX: keep track of token position for error msg? */
+	struct pos pos;
+	struct pos old_pos;
+};
+
+#define TOK_BUFFER_SIZE 32
+struct token_stream {
+	struct input *in;
+	struct str *stack[TOK_BUFFER_SIZE];
+	int size;
+};
+
+void in_ungetc(struct input *in, int c)
+{
+	if (c == EOF) {
+		if (in->eof) {
+			if (in->nb_eof) {
+				in->nb_eof--;
+				return;
+			}
+			in->eof = false;
+		} else {
+			E("unexpected ungetc EOF");
+		}
+	}
+	int r = ungetc(c, in->fh);
+	assert(r != EOF);
+	in->pos = in->old_pos;
+}
+
+int in_getc(struct input *in)
+{
+	int c;
+
+	if (in->eof) {
+		c = EOF;
+		in->nb_eof++;
+	} else {
+		c = fgetc(in->fh);
+		in->old_pos = in->pos;
+		if (c == '\n') {
+			in->pos.line++;
+			in->pos.col = 0;
+		} else {
+			in->pos.col++;
+		}
+		if (c == EOF)
+			in->eof = true;
+	}
+
+	return c;
+}
+
+struct str *str_new(void)
+{
+	struct str *str = calloc(sizeof(*str), 1);
+	if (!str)
+		E("oom");
+	return str;
+}
+
+void str_free(struct str *str)
+{
+	free(str->s);
+	free(str);
+}
+
+void str_push(struct str *str, char c)
+{
+	int new_capa = str->capa < 10 ? 10 : str->capa*2;
+
+	/* always keep one null at the end */
+	if (str->size+1 >= str->capa) {
+		char *p = realloc(str->s, new_capa);
+		if (!p)
+			E("oom");
+		str->s = p;
+		str->capa = new_capa;
+	}
+
+	str->s[str->size++] = c;
+}
+
+void read_comment(struct input *in) {
+	int c;
+	while ((c = in_getc(in)) != EOF) {
+		if (c == '\n')
+			return;
+	}
+}
+
+struct str *read_word(struct input *in, struct str *tok)
+{
+	int quote;
+	int c;
+	int c2;
+
+	tok->type = TOK_WORD;
+
+ connected_word:
+	quote = 0;
+	c = in_getc(in);
+	switch (c) {
+	case '\'':
+	case '"':
+		quote = c;
+		break;
+	case EOF:
+		return tok;
+	default:
+		str_push(tok, c);
+		break;
+	}
+
+	while ((c = in_getc(in)) != EOF) {
+		if (quote) {
+			if (c == quote)
+				return tok;
+			else if (c == '\\') {
+				c2 = in_getc(in);
+				if (c2 == EOF)
+					E("EOF after '\\'");
+				str_push(tok, c2);
+			} else {
+				str_push(tok, c);
+			}
+		} else {
+			if (strchr("#|&><!()\n\t ;", c)) {
+				in_ungetc(in, c);
+				return tok;
+			}
+			if (strchr("\"'", c)) {
+				in_ungetc(in, c);
+				goto connected_word;
+			}
+			else
+				str_push(tok, c);
+		}
+	}
+	return tok;
+}
+
+#define READ_DOUBLE_OP(op2, tok1, tok2)		\
+	do {					\
+		c2 = in_getc(in);		\
+		if (c2 == op2) {		\
+			tok->type = tok2;	\
+			return tok;		\
+		} else {			\
+			tok->type = tok1;	\
+			if (c2 == EOF)		\
+				goto eof;	\
+			in_ungetc(in, c2);	\
+			return tok;		\
+		}				\
+	} while (0)
+
+struct str *read_token(struct input *in)
+{
+	int c;
+	int c2;
+	struct str *tok = str_new();
+
+	while (1) {
+	next_char:
+		switch (c = in_getc(in)) {
+		eof:
+		case EOF:
+			return tok;
+		case '#':
+			read_comment(in);
+			break;
+		case '|':
+			READ_DOUBLE_OP('|', TOK_PIPE, TOK_OR);
+			break;
+		case '&':
+			READ_DOUBLE_OP('&', TOK_BG, TOK_AND);
+			break;
+		case '>':
+			READ_DOUBLE_OP('>', TOK_REDIR_OUT, TOK_REDIR_APPEND);
+			break;
+		case '<':
+			tok->type = TOK_REDIR_IN;
+			return tok;
+		case '!':
+			tok->type = TOK_NOT;
+			return tok;
+		case '(':
+			tok->type = TOK_LPAREN;
+			return tok;
+		case ')':
+			tok->type = TOK_RPAREN;
+			return tok;
+		case '\n':
+			tok->type = TOK_NEWLINE;
+			return tok;
+		case ';':
+			tok->type = TOK_SEMICOL;
+			return tok;
+		case ' ':
+		case '\t':
+			goto next_char;
+		default:
+			/* WORD and quoted strings */
+			in_ungetc(in, c);
+			return read_word(in, tok);
+		}
+	}
+}
+
+struct str *tok_stream_get(struct token_stream *ts)
+{
+	struct str *tok;
+	if (ts->size)
+		tok = ts->stack[--ts->size];
+	else
+		tok = read_token(ts->in);
+
+	return tok;
+}
+
+void token_stream_unget(struct token_stream *ts, struct str *tok)
+{
+	if (ts->size >= TOK_BUFFER_SIZE)
+		E("oom");
+	ts->stack[ts->size++] = tok;
+}
+
+struct expr *expr_new(enum expr_type type)
+{
+	struct expr *expr = calloc(1, sizeof(*expr));
+	expr->type = type;
+	return expr;
+}
+
+void dump_token(struct str *tok)
+{
+	switch (tok->type) {
+	case TOK_NONE: puts("NONE"); break;
+	case TOK_NEWLINE: puts("NEWLINE"); break;
+	case TOK_SEMICOL: puts("SEMICOL ;"); break;
+	case TOK_WORD: printf("WORD <%s>\n", tok->s); break;
+	case TOK_PIPE: puts("PIPE"); break;
+	case TOK_OR: puts("OR"); break;
+	case TOK_AND: puts("AND"); break;
+	case TOK_NOT: puts("NOT"); break;
+	case TOK_REDIR_OUT: puts("REDIR >"); break;
+	case TOK_REDIR_IN: puts("REDIR <"); break;
+	case TOK_REDIR_APPEND: puts("APPEND >>"); break;
+	case TOK_BG: puts("BG &"); break;
+	case TOK_LPAREN: puts("LPAREN ("); break;
+	case TOK_RPAREN: puts("RPAREN )"); break;
+	default: puts("???"); break;
+	}
+}
+
+void indent(int n)
+{
+	int i;
+	for (i = 0; i < n; i++)
+		printf("  ");
+}
+
+#define IND_PRINT(n, fmt, ...) indent(n), printf(fmt, ##__VA_ARGS__)
+#define DUMP_UNARY(n, e, name, field)				\
+	do {							\
+		IND_PRINT(n, "%s {\n", name);			\
+		dump_expr(e->field.expr, n+1, graphviz);	\
+		IND_PRINT(n, "}\n");				\
+	} while (0)
+
+#define DUMP_BINARY(n, e, name, field)				\
+	do {							\
+		IND_PRINT(n, "%s {\n", name);			\
+		IND_PRINT(n+1, "left {\n");			\
+		dump_expr(e->field.left, n+2, graphviz);	\
+		IND_PRINT(n+1, "}\n");				\
+		IND_PRINT(n+1, "right {\n");			\
+		dump_expr(e->field.right, n+2, graphviz);	\
+		IND_PRINT(n+1, "}\n");				\
+		IND_PRINT(n, "}\n");				\
+	} while (0)
+
+void dump_expr(struct expr *e, int n, bool graphviz)
+{
+	int i;
+
+	if (!e) {
+		IND_PRINT(n, "NULL EXPR\n");
+		return;
+	}
+
+	switch (e->type) {
+	case EXPR_PROG:
+		IND_PRINT(n, "PROG {\n");
+		for (i = 0; i < e->prog.size; i++)
+			dump_expr(e->prog.cmds[i], n+1, graphviz);
+		IND_PRINT(n, "}\n");
+		break;
+	case EXPR_AND:
+		DUMP_BINARY(n, e, "AND", and_or);
+		break;
+	case EXPR_OR:
+		DUMP_BINARY(n, e, "OR", and_or);
+		break;
+	case EXPR_PIPE:
+		DUMP_BINARY(n, e, "PIPE", pipe);
+		break;
+	case EXPR_SIMPLE_CMD:
+		IND_PRINT(n, "CMD ");
+		for (i = 0; i < e->simple_cmd.size; i++)
+			printf("<%s> ", e->simple_cmd.words[i]->s);
+		putchar('\n');
+		break;
+	case EXPR_NOT:
+		DUMP_UNARY(n, e, "NOT", not);
+		break;
+	case EXPR_SUB:
+		DUMP_UNARY(n, e, "SUBSHELL", sub);
+		break;
+	default:
+		IND_PRINT(n, "UNKNOWN TYPE %d\n", e->type);
+		break;
+	}
+}
+
+
+int main(void)
+{
+	struct input in = {.fh = stdin, .pos = {.line = 1}};
+	struct str *tok;
+	struct expr *root;
+	void *parser = ParseAlloc(malloc);
+
+	printf("=== LEXING ===\n");
+
+	while (1) {
+		/* read token */
+		tok = read_token(&in);
+		printf("TOK: ");
+		dump_token(tok);
+
+		/* feed it to parser */
+		Parse(parser, tok->type, tok, &root);
+		if (tok->type == TOK_NONE)
+			break;
+	}
+	ParseFree(parser, free);
+
+	printf("=== PARSING ===\n");
+
+	/* dumping AST */
+	dump_expr(root, 0, false);
+	return 0;
+}

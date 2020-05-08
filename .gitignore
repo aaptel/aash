@@ -1,0 +1,8 @@
+\#*
+*~
+*.o
+lemon
+parser.out
+parser.c
+parser.h
+aash
