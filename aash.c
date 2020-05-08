@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "dbg.h"
 #include "ast.h"
@@ -343,6 +346,74 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 	}
 }
 
+
+struct exec_result {
+	int status;
+	pid_t pid;
+};
+
+#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
+
+void exec_expr(struct expr *e, struct exec_result *res)
+{
+	int i;
+	pid_t rc;
+
+	assert(e);
+
+	switch (e->type) {
+	case EXPR_PROG:
+		for (i = 0; i < e->prog.size; i++)
+			exec_expr(e->prog.cmds[i], res);
+		break;
+	case EXPR_SIMPLE_CMD:
+		res->pid = fork();
+		if (res->pid < 0)
+			E("fork");
+
+		if (res->pid == 0) {
+			/* child */
+			char **argv = calloc(sizeof(*argv), e->simple_cmd.size+1);
+			for (i = 0; i < e->simple_cmd.size; i++)
+				argv[i] = e->simple_cmd.words[i]->s;
+			execvp(argv[0], argv);
+			exit(1);
+		}
+
+		rc = waitpid(res->pid, &res->status, 0);
+		if (rc < 0)
+			E("waitpid");
+		break;
+	case EXPR_AND:
+		/* run left, stop if failure */
+		exec_expr(e->and_or.left, res);
+		if (FAILED(res->status))
+			return;
+		/* run right, stop if failure */
+		exec_expr(e->and_or.right, res);
+		if (FAILED(res->status))
+			return;
+		break;
+	case EXPR_OR:
+		/* run left, stop if success */
+		exec_expr(e->and_or.left, res);
+		if (!FAILED(res->status))
+			return;
+		/* run right, stop if success */
+		exec_expr(e->and_or.right, res);
+		if (!FAILED(res->status))
+			return;
+		break;
+	case EXPR_NOT:
+		/* inverse failure and success */
+		exec_expr(e->not.expr, res);
+		res->status = FAILED(res->status) ? 0 : 1;
+		break;
+	default:
+		E("TODO");
+	}
+}
+
 int main(void)
 {
 	struct input in = {.fh = stdin, .pos = {.line = 1}};
@@ -367,7 +438,13 @@ int main(void)
 
 	printf("=== PARSING ===\n");
 
-	/* dumping AST */
 	dump_expr(root, 0, false);
+
+	printf("=== RUNNING ===\n");
+
+	struct exec_result res;
+	exec_expr(root, &res);
+	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
+
 	return 0;
 }
