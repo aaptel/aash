@@ -308,6 +308,7 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		return;
 	}
 
+	if (e->run_in_bg) { IND_PRINT(n, "(in bg) "); }
 	switch (e->type) {
 	case EXPR_PROG:
 		IND_PRINT(n, "PROG {\n");
@@ -341,7 +342,6 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		break;
 	}
 }
-
 
 int main(void)
 {

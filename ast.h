@@ -1,5 +1,5 @@
 #pragma once
-
+#include <stdbool.h>
 #include "dbg.h"
 
 enum token_type {
@@ -45,6 +45,7 @@ struct expr {
 		EXPR_NOT,
 		EXPR_SUB,
 	} type;
+	bool run_in_bg;
 	union {
 		struct expr_sub {
 			struct expr *expr;
