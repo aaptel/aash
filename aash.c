@@ -10,25 +10,10 @@
 #include "dbg.h"
 #include "ast.h"
 
-struct pos {
-	size_t line, col;
-};
-
 struct input {
 	FILE *fh;
 	bool eof;
 	size_t nb_eof;
-
-	/* XXX: keep track of token position for error msg? */
-	struct pos pos;
-	struct pos old_pos;
-};
-
-#define TOK_BUFFER_SIZE 32
-struct token_stream {
-	struct input *in;
-	struct str *stack[TOK_BUFFER_SIZE];
-	int size;
 };
 
 void in_ungetc(struct input *in, int c)
@@ -46,7 +31,6 @@ void in_ungetc(struct input *in, int c)
 	}
 	int r = ungetc(c, in->fh);
 	assert(r != EOF);
-	in->pos = in->old_pos;
 }
 
 int in_getc(struct input *in)
@@ -58,13 +42,6 @@ int in_getc(struct input *in)
 		in->nb_eof++;
 	} else {
 		c = fgetc(in->fh);
-		in->old_pos = in->pos;
-		if (c == '\n') {
-			in->pos.line++;
-			in->pos.col = 0;
-		} else {
-			in->pos.col++;
-		}
 		if (c == EOF)
 			in->eof = true;
 	}
@@ -227,24 +204,6 @@ struct str *read_token(struct input *in)
 			return read_word(in, tok);
 		}
 	}
-}
-
-struct str *tok_stream_get(struct token_stream *ts)
-{
-	struct str *tok;
-	if (ts->size)
-		tok = ts->stack[--ts->size];
-	else
-		tok = read_token(ts->in);
-
-	return tok;
-}
-
-void token_stream_unget(struct token_stream *ts, struct str *tok)
-{
-	if (ts->size >= TOK_BUFFER_SIZE)
-		E("oom");
-	ts->stack[ts->size++] = tok;
 }
 
 struct expr *expr_new(enum expr_type type)
@@ -415,6 +374,8 @@ void exec_expr(struct expr *e, struct exec_context *res)
 		int pipefd[2];
 		pid_t left, right;
 
+		// TODO: avoid extra forks?
+
 		rc = pipe(pipefd);
 		if (rc < 0)
 			E("pipe");
@@ -473,7 +434,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 
 int main(void)
 {
-	struct input in = {.fh = stdin, .pos = {.line = 1}};
+	struct input in = {.fh = stdin};
 	struct str *tok;
 	struct expr *root;
 	void *parser = ParseAlloc(malloc);
