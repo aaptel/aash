@@ -12,6 +12,16 @@ enum token_type {
 	TOK_REDIR_APPEND = 102,
 };
 
+/* Use to store tokens */
+struct str {
+	enum token_type type;
+	/* for word tokens: */
+	char *s;
+	size_t size;
+	size_t capa;
+};
+
+
 #define PUSH(base, array, val)						\
 	do {								\
 		void *p;						\

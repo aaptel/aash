@@ -11,13 +11,6 @@ struct pos {
 	size_t line, col;
 };
 
-struct str {
-	enum token_type type;
-	char *s;
-	size_t size;
-	size_t capa;
-};
-
 struct input {
 	FILE *fh;
 	bool eof;
