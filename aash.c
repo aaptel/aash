@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #include "dbg.h"
 #include "ast.h"
@@ -87,54 +88,107 @@ void read_comment(struct input *in) {
 	}
 }
 
+bool is_word_all_digits(struct str *w)
+{
+	int i;
+	char *s = w->s;
+
+	for (i = 0; i < w->size-1; i++)
+		if (!isdigit(s[i]))
+			return false;
+
+	return true;
+}
+
 struct str *read_word(struct input *in, struct str *tok)
 {
-	int quote;
+	int in_quote = 0;
+	int in_shellexp = 0; // $( .. )
 	int c;
 	int c2;
 
 	tok->type = TOK_WORD;
 
- connected_word:
-	quote = 0;
-	c = in_getc(in);
-	switch (c) {
-	case '\'':
-	case '"':
-		quote = c;
-		break;
-	case EOF:
-		return tok;
-	default:
-		str_push(tok, c);
-		break;
-	}
-
 	while ((c = in_getc(in)) != EOF) {
-		if (quote) {
-			if (c == quote)
-				return tok;
+		if (in_quote) {
+			if (c == in_quote) {
+				if (in_quote == ')') {
+					in_shellexp--;
+					if (in_shellexp == 0)
+						in_quote = 0;
+				} else {
+					in_quote = 0;
+				}
+			}
+			else if (c == '$') {
+				c2 = in_getc(in);
+				if (c2 == EOF) {
+					str_push(tok, c);
+					goto out;
+				}
+				if (c2 == '(' && in_quote == ')') {
+					assert(in_shellexp > 0);
+					in_shellexp++;
+				}
+				str_push(tok, c);
+				str_push(tok, c2);
+				continue;
+			}
 			else if (c == '\\') {
 				c2 = in_getc(in);
-				if (c2 == EOF)
-					E("EOF after '\\'");
-				str_push(tok, c2);
-			} else {
-				str_push(tok, c);
+				if (c2 == EOF) {
+					str_push(tok, c);
+					goto out;
+				}
+				if (c2 == '\n') // line continuation
+					continue;
+				c = c2;
 			}
+			str_push(tok, c);
+			continue;
 		} else {
-			if (strchr("#|&><!()\n\t ;", c)) {
-				in_ungetc(in, c);
-				return tok;
+			if (c == '\\') {
+				c2 = in_getc(in);
+				if (c2 == EOF) {
+					str_push(tok, c);
+					goto out;
+				}
+				if (c2 == '\n') // line continuation
+					continue;
+				str_push(tok, c2);
+				continue;
 			}
-			if (strchr("\"'", c)) {
-				in_ungetc(in, c);
-				goto connected_word;
-			}
-			else
+
+			if (c == '$') {
+				c2 = in_getc(in);
+				if (c2 == EOF) {
+					str_push(tok, c);
+					goto out;
+				}
+				if (c2 == '(') {
+					in_quote = ')';
+					assert(in_shellexp == 0);
+					in_shellexp++;
+				}
 				str_push(tok, c);
+				str_push(tok, c2);
+				continue;
+			}
+
+			if (strchr("#|&><!()\n\t ;", c)) {
+				if (c == '>' && is_word_all_digits(tok)) {
+					tok->type = TOK_IO_NUMBER;
+				}
+				in_ungetc(in, c);
+				goto out;
+			}
+			if (strchr("`\"'", c)) {
+				in_quote = c;
+			}
+			str_push(tok, c);
 		}
 	}
+ out:
 	return tok;
 }
 
@@ -143,13 +197,12 @@ struct str *read_word(struct input *in, struct str *tok)
 		c2 = in_getc(in);		\
 		if (c2 == op2) {		\
 			tok->type = tok2;	\
-			return tok;		\
 		} else {			\
 			tok->type = tok1;	\
 			if (c2 == EOF)		\
 				goto eof;	\
 			in_ungetc(in, c2);	\
-			return tok;		\
+			goto out;		\
 		}				\
 	} while (0)
 
@@ -164,7 +217,7 @@ struct str *read_token(struct input *in)
 		switch (c = in_getc(in)) {
 		eof:
 		case EOF:
-			return tok;
+			goto out;
 		case '#':
 			read_comment(in);
 			break;
@@ -173,37 +226,48 @@ struct str *read_token(struct input *in)
 			break;
 		case '&':
 			READ_DOUBLE_OP('&', TOK_BG, TOK_AND);
-			break;
+			goto out;
 		case '>':
-			READ_DOUBLE_OP('>', TOK_REDIR_OUT, TOK_REDIR_APPEND);
-			break;
+			c2 = in_getc(in);
+			if (c2 == '>')
+				tok->type = TOK_REDIR_APPEND;
+			else if (c2 == '&')
+				tok->type = TOK_REDIR_FD;
+			else {
+				tok->type = TOK_REDIR_OUT;
+				in_ungetc(in, c2);
+			}
+			goto out;
 		case '<':
 			tok->type = TOK_REDIR_IN;
-			return tok;
+			goto out;
 		case '!':
 			tok->type = TOK_NOT;
-			return tok;
+			goto out;
 		case '(':
 			tok->type = TOK_LPAREN;
-			return tok;
+			goto out;
 		case ')':
 			tok->type = TOK_RPAREN;
-			return tok;
+			goto out;
 		case '\n':
 			tok->type = TOK_NEWLINE;
-			return tok;
+			goto out;
 		case ';':
 			tok->type = TOK_SEMICOL;
-			return tok;
+			goto out;
 		case ' ':
 		case '\t':
 			goto next_char;
 		default:
 			/* WORD and quoted strings */
 			in_ungetc(in, c);
-			return read_word(in, tok);
+			read_word(in, tok);
+			goto out;
 		}
 	}
+ out:
+	return tok;
 }
 
 struct expr *expr_new(enum expr_type type)
@@ -227,9 +291,12 @@ void dump_token(struct str *tok)
 	case TOK_REDIR_OUT: puts("REDIR >"); break;
 	case TOK_REDIR_IN: puts("REDIR <"); break;
 	case TOK_REDIR_APPEND: puts("APPEND >>"); break;
+	case TOK_REDIR_FD: puts("REDIR_FD >&"); break;
 	case TOK_BG: puts("BG &"); break;
 	case TOK_LPAREN: puts("LPAREN ("); break;
 	case TOK_RPAREN: puts("RPAREN )"); break;
+	case TOK_IO_NUMBER: printf("IO_NUMBER %s\n", tok->s); break;
+	case TOK_ASSIGN: puts("IO_ASSIGN"); break;
 	default: puts("???"); break;
 	}
 }

@@ -72,6 +72,7 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 
 command(R) ::= simple_command(E). { R = E; }
 command(R) ::= subshell(E). { R = E; }
+command(R) ::= subshell(E) redirect_list. { R = E; }
 
 subshell(R) ::= LPAREN compound_list(E) RPAREN. {
 	R = expr_new(EXPR_SUB);
@@ -104,15 +105,32 @@ simple_command(R) ::= simple_command(E) WORD(W). {
 	R = E;
 	expr_simple_cmd_add_word(R, W);
 }
+simple_command ::= simple_command io_redirect.
 
-separator_op(R) ::= SEMICOL(T). { R = T; }
-separator_op(R) ::= BG(T). { R = T; }
+redirect_list ::= io_redirect.
+redirect_list ::= redirect_list io_redirect.
 
-separator(R) ::= separator_op(S) linebreak. { R = S; }
-separator(R) ::= newline_list. { R = NULL; }
+io_redirect ::= io_file.
+io_redirect ::= IO_NUMBER io_file.
+
+// TODO make io_file store cmd_redirect
+// TODO make redirect_list store list of cmd_redirect
+// TODO store redirect list in expr for cmpd_comands & simple commands
+// TODO filter out assignement and redirections in exec
+
+io_file ::= REDIR_OUT WORD.
+io_file ::= REDIR_IN WORD.
+io_file ::= REDIR_APPEND WORD.
+io_file ::= REDIR_FD.
 
 newline_list ::= NEWLINE.
 newline_list ::= newline_list NEWLINE.
 
 linebreak ::= newline_list.
 linebreak ::= .
+
+separator_op(R) ::= SEMICOL(T). { R = T; }
+separator_op(R) ::= BG(T). { R = T; }
+
+separator(R) ::= separator_op(S) linebreak. { R = S; }
+separator(R) ::= newline_list. { R = NULL; }

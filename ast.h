@@ -5,12 +5,8 @@
 enum token_type {
 	TOK_NONE = 0,
 #include "parser.h"
-
 	/* TODO: handle those in parser */
-	TOK_REDIR_OUT    = 100,
-	TOK_REDIR_IN     = 101,
-	TOK_REDIR_APPEND = 102,
-	TOK_ASSIGN       = 104,
+	TOK_ASSIGN       = 100,
 };
 
 /* Use to store tokens */
@@ -35,6 +31,13 @@ struct str {
 		}							\
 		(base)->array[(base)->size++] = val;			\
 	} while(0)
+
+
+struct cmd_redirect {
+	int src_fd; /* 0 1 2 */
+	int mode; /* < > >> >& */
+	struct str *dst; /* file or fd */
+};
 
 struct expr {
 	enum expr_type {
