@@ -116,7 +116,7 @@ io_redirect ::= IO_NUMBER io_file.
 // TODO make io_file store cmd_redirect
 // TODO make redirect_list store list of cmd_redirect
 // TODO store redirect list in expr for cmpd_comands & simple commands
-// TODO filter out assignement and redirections in exec
+// TODO filter out redirections in exec
 
 io_file ::= REDIR_OUT WORD.
 io_file ::= REDIR_IN WORD.

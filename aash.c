@@ -415,8 +415,12 @@ void exec_expr(struct expr *e, struct exec_context *res)
 		if (res->pid == 0) {
 			/* child */
 			char **argv = calloc(sizeof(*argv), e->simple_cmd.size+1);
-			for (i = 0; i < e->simple_cmd.size; i++)
-				argv[i] = e->simple_cmd.words[i]->s;
+			int j = 0;
+			for (i = 0; i < e->simple_cmd.size; i++) {
+				// discard assignements
+				if (e->simple_cmd.words[i]->type == TOK_WORD)
+					argv[j++] = e->simple_cmd.words[i]->s;
+			}
 			execvp(argv[0], argv);
 			exit(1);
 		}
