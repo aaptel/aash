@@ -323,13 +323,6 @@ void indent(int n)
 }
 
 #define IND_PRINT(n, fmt, ...) indent(n), printf(fmt, ##__VA_ARGS__)
-#define DUMP_UNARY(n, e, name, field)				\
-	do {							\
-		IND_PRINT(n, "%s {\n", name);			\
-		dump_expr(e->field.expr, n+1, graphviz);	\
-		IND_PRINT(n, "}\n");				\
-	} while (0)
-
 #define DUMP_BINARY(n, e, name, field)				\
 	do {							\
 		IND_PRINT(n, "%s {\n", name);			\
@@ -341,6 +334,30 @@ void indent(int n)
 		IND_PRINT(n+1, "}\n");				\
 		IND_PRINT(n, "}\n");				\
 	} while (0)
+
+
+void dump_cmd_redirect(struct cmd_redirect *c)
+{
+	printf("REDIR ");
+	if (c->stdin.is_set) {
+		assert(!c->stdin.is_fd);
+		printf("stdin=%s ", c->stdin.fn->s);
+	}
+	if (c->stdout.is_set) {
+		printf("stdout=");
+		if (c->stdout.is_fd)
+			printf("fd%d ", c->stdout.fd);
+		else
+			printf("fn<%s> ", c->stdout.fn->s);
+	}
+	if (c->stderr.is_set) {
+		printf("stderr=");
+		if (c->stderr.is_fd)
+			printf("fd%d ", c->stderr.fd);
+		else
+			printf("fn<%s> ", c->stderr.fn->s);
+	}
+}
 
 void dump_expr(struct expr *e, int n, bool graphviz)
 {
@@ -372,17 +389,69 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		IND_PRINT(n, "CMD ");
 		for (i = 0; i < e->simple_cmd.size; i++)
 			printf("<%s> ", e->simple_cmd.words[i]->s);
+		dump_cmd_redirect(&e->simple_cmd.redir);
 		putchar('\n');
 		break;
 	case EXPR_NOT:
-		DUMP_UNARY(n, e, "NOT", not);
+		IND_PRINT(n, "NOT {\n");
+		dump_expr(e->not.expr, n+1, graphviz);
+		IND_PRINT(n, "}\n");
 		break;
 	case EXPR_SUB:
-		DUMP_UNARY(n, e, "SUBSHELL", sub);
+		IND_PRINT(n, "SUBSHELL ");
+		dump_cmd_redirect(&e->sub.redir);
+		printf(" {\n");
+		dump_expr(e->sub.expr, n+1, graphviz);
+		IND_PRINT(n, "}\n");
 		break;
 	default:
 		IND_PRINT(n, "UNKNOWN TYPE %d\n", e->type);
 		break;
+	}
+}
+
+void stream_redirect_init(struct stream_redirect *sr, struct str *mode, struct str *file)
+{
+	memset(sr, 0, sizeof(*sr));
+	sr->is_set = true;
+	switch (mode->type) {
+	case TOK_REDIR_APPEND:
+		sr->is_append = true;
+		sr->fn = file;
+		break;
+	case TOK_REDIR_OUT:
+		sr->fn = file;
+		break;
+	case TOK_REDIR_IN:
+		sr->is_input = true;
+		sr->stream = 0;
+		sr->fn = file;
+		break;
+	case TOK_REDIR_FD:
+		sr->is_fd = true;
+		sr->fd = atoi(file->s);
+		break;
+	default:
+		E("unknown mode");
+	}
+}
+
+void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s)
+{
+	assert(s->is_set);
+
+	switch (s->stream) {
+	case 0:
+		c->stdin = *s;
+		break;
+	case 1:
+		c->stdout = *s;
+		break;
+	case 2:
+		c->stderr = *s;
+		break;
+	default:
+		E("cannot handle stream %d", s->stream);
 	}
 }
 

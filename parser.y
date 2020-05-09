@@ -1,6 +1,8 @@
 %include {
+#include <string.h>
 #include "dbg.h"
 #include "ast.h"
+
 #define IS_BG(t) ((t) && (t)->type == TOK_BG)
 }
 
@@ -12,8 +14,13 @@
 %token_prefix TOK_
 %default_type {struct expr *}
 %token_type {struct str *}
+
 %type separator_op {struct str *}
 %type separator {struct str *}
+
+%type redirect_list {struct cmd_redirect}
+%type io_file {struct stream_redirect}
+%type io_redirect {struct stream_redirect}
 
 program(R) ::= linebreak complete_commands(E) linebreak. { R = E; *root = R;}
 program(R) ::= linebreak.                                { R = expr_new(EXPR_PROG); *root = R;}
@@ -72,7 +79,7 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 
 command(R) ::= simple_command(E). { R = E; }
 command(R) ::= subshell(E). { R = E; }
-command(R) ::= subshell(E) redirect_list. { R = E; }
+command(R) ::= subshell(E) redirect_list(L). { R = E; R->sub.redir = L; }
 
 subshell(R) ::= LPAREN compound_list(E) RPAREN. {
 	R = expr_new(EXPR_SUB);
@@ -105,23 +112,31 @@ simple_command(R) ::= simple_command(E) WORD(W). {
 	R = E;
 	expr_simple_cmd_add_word(R, W);
 }
-simple_command ::= simple_command io_redirect.
+simple_command(R) ::= simple_command(A) io_redirect(B). {
+	R = A;
+	cmd_redirect_merge(&R->simple_cmd.redir, &B);
+}
 
-redirect_list ::= io_redirect.
-redirect_list ::= redirect_list io_redirect.
+redirect_list(R) ::= io_redirect(A). {
+ 	memset(&R, 0, sizeof(R));
+	cmd_redirect_merge(&R, &A);
+}
+redirect_list(R) ::= redirect_list(A) io_redirect(B). {
+	R = A;
+	cmd_redirect_merge(&R, &B);
+}
 
-io_redirect ::= io_file.
-io_redirect ::= IO_NUMBER io_file.
+// we set the source of the redirect (no number = stdout)
+io_redirect(R) ::= io_file(A).              { R = A; R.stream = 1; }
+io_redirect(R) ::= IO_NUMBER(N) io_file(A). { R = A; R.stream = atoi(N->s); }
 
-// TODO make io_file store cmd_redirect
-// TODO make redirect_list store list of cmd_redirect
 // TODO store redirect list in expr for cmpd_comands & simple commands
-// TODO filter out redirections in exec
 
-io_file ::= REDIR_OUT WORD.
-io_file ::= REDIR_IN WORD.
-io_file ::= REDIR_APPEND WORD.
-io_file ::= REDIR_FD.
+// we set the mode and input/dest of the redirect
+io_file(R) ::= REDIR_OUT(M) WORD(D).    { stream_redirect_init(&R, M, D); }
+io_file(R) ::= REDIR_IN(M) WORD(D).     { stream_redirect_init(&R, M, D); }
+io_file(R) ::= REDIR_APPEND(M) WORD(D). { stream_redirect_init(&R, M, D); }
+io_file(R) ::= REDIR_FD(M) WORD(D).     { stream_redirect_init(&R, M, D); }
 
 newline_list ::= NEWLINE.
 newline_list ::= newline_list NEWLINE.

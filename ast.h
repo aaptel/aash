@@ -34,10 +34,21 @@ struct str {
 
 
 struct cmd_redirect {
-	int src_fd; /* 0 1 2 */
-	int mode; /* < > >> >& */
-	struct str *dst; /* file or fd */
+	struct stream_redirect {
+		bool is_set;
+		int stream;
+		bool is_input;
+		bool is_append;
+		bool is_fd;
+		union {
+			int fd;
+			struct str *fn;
+		};
+	} stdin, stdout, stderr;
 };
+
+void stream_redirect_init(struct stream_redirect *sr, struct str *mode, struct str *file);
+void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s);
 
 struct expr {
 	enum expr_type {
@@ -53,6 +64,7 @@ struct expr {
 	union {
 		struct expr_sub {
 			struct expr *expr;
+			struct cmd_redirect redir;
 		} sub;
 		struct expr_not {
 			struct expr *expr;
@@ -69,6 +81,7 @@ struct expr {
 			struct str **words;
 			size_t size;
 			size_t capa;
+			struct cmd_redirect redir;
 		} simple_cmd;
 		struct prog {
 			struct expr **cmds;
