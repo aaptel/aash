@@ -13,6 +13,8 @@
 #include "dbg.h"
 #include "ast.h"
 
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
+
 struct input {
 	FILE *fh;
 	bool eof;
@@ -457,14 +459,60 @@ void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s)
 	}
 }
 
-
-struct exec_context {
+struct exec_result {
 	int status;
 	pid_t pid;
 };
 
-#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
+struct exec_context {
+	pid_t *bg_jobs;
+	size_t size;
+	size_t capa;
+};
 
+/*
+ * Shell builtins
+ */
+
+typedef int (*builtin_func_t) (struct expr_simple_cmd *, struct exec_context *, struct exec_result *);
+
+int builtin_wait(struct expr_simple_cmd *cmd, struct exec_context *ctx, struct exec_result *res)
+{
+	pid_t rc, pid;
+
+	/* wait last created pid */
+
+	if (ctx->size == 0) {
+		res->status = 1;
+		return 1;
+	}
+
+	pid = ctx->bg_jobs[ctx->size-1];
+	rc = waitpid(pid, &res->status, 0);
+	if (rc < 0)
+		return 1;
+
+	return 0;
+}
+
+struct {
+	const char *name;
+	builtin_func_t func;
+} g_builtins[] = {
+	{"wait", builtin_wait},
+};
+
+builtin_func_t builtin_find(const char *name)
+{
+	int i;
+	for (i = 0; i < ARRAY_SIZE(g_builtins); i++) {
+		if (strcmp(name, g_builtins[i].name) == 0)
+			return g_builtins[i].func;
+	}
+	return NULL;
+}
+
+#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
 
 void exec_apply_redir(struct cmd_redirect *c)
 {
@@ -506,20 +554,40 @@ void exec_apply_redir(struct cmd_redirect *c)
 	}
 }
 
-void exec_expr(struct expr *e, struct exec_context *res)
+void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
 {
 	int i;
-	pid_t rcpid;
+	pid_t rcpid, bg_pid;
 	int rc;
+	builtin_func_t func;
 
 	assert(e);
+
+	if (e->run_in_bg) {
+		bg_pid = fork();
+		if (bg_pid < 0)
+			E("fork");
+		if (bg_pid != 0) {
+			/* parent */
+			PUSH(ctx, bg_jobs, bg_pid);
+			res->pid = bg_pid;
+			goto out;
+		}
+	}
 
 	switch (e->type) {
 	case EXPR_PROG:
 		for (i = 0; i < e->prog.size; i++)
-			exec_expr(e->prog.cmds[i], res);
+			exec_expr(e->prog.cmds[i], ctx, res);
 		break;
 	case EXPR_SIMPLE_CMD:
+		/* check builtins */
+		func = builtin_find(e->simple_cmd.words[0]->s);
+		if (func) {
+			func(&e->simple_cmd, ctx, res);
+			goto out;
+		}
+		/* otherwise fork & exec */
 		res->pid = fork();
 		if (res->pid < 0)
 			E("fork");
@@ -544,27 +612,27 @@ void exec_expr(struct expr *e, struct exec_context *res)
 		break;
 	case EXPR_AND:
 		/* run left, stop if failure */
-		exec_expr(e->and_or.left, res);
+		exec_expr(e->and_or.left, ctx, res);
 		if (FAILED(res->status))
-			return;
+			goto out;
 		/* run right, stop if failure */
-		exec_expr(e->and_or.right, res);
+		exec_expr(e->and_or.right, ctx, res);
 		if (FAILED(res->status))
-			return;
+			goto out;
 		break;
 	case EXPR_OR:
 		/* run left, stop if success */
-		exec_expr(e->and_or.left, res);
+		exec_expr(e->and_or.left, ctx, res);
 		if (!FAILED(res->status))
-			return;
+			goto out;
 		/* run right, stop if success */
-		exec_expr(e->and_or.right, res);
+		exec_expr(e->and_or.right, ctx, res);
 		if (!FAILED(res->status))
-			return;
+			goto out;
 		break;
 	case EXPR_NOT:
 		/* inverse failure and success */
-		exec_expr(e->not.expr, res);
+		exec_expr(e->not.expr, ctx, res);
 		res->status = FAILED(res->status) ? 0 : 1;
 		break;
 	case EXPR_PIPE:
@@ -586,7 +654,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 			dup2(pipefd[1], 1);
 			close(pipefd[0]);
 			close(pipefd[1]);
-			exec_expr(e->and_or.left, res);
+			exec_expr(e->and_or.left, ctx, res);
 			exit(FAILED(res->status) ? 1 : 0);
 		}
 
@@ -598,7 +666,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 			dup2(pipefd[0], 0);
 			close(pipefd[0]);
 			close(pipefd[1]);
-			exec_expr(e->and_or.right, res);
+			exec_expr(e->and_or.right, ctx, res);
 			exit(FAILED(res->status) ? 1 : 0);
 		}
 
@@ -617,7 +685,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 
 		if (child == 0) {
 			exec_apply_redir(&e->sub.redir);
-			exec_expr(e->sub.expr, res);
+			exec_expr(e->sub.expr, ctx, res);
 			exit(FAILED(res->status) ? 1 : 0);
 		}
 
@@ -629,6 +697,13 @@ void exec_expr(struct expr *e, struct exec_context *res)
 	default:
 		E("TODO");
 	}
+
+ out:
+	if (e->run_in_bg && bg_pid == 0) {
+		/* child */
+		exit(FAILED(res->status) ? 1 : 0);
+	}
+	return;
 }
 
 int main(void)
@@ -659,8 +734,9 @@ int main(void)
 
 	printf("=== RUNNING ===\n");
 
-	struct exec_context res = {0};
-	exec_expr(root, &res);
+	struct exec_result res = {0};
+	struct exec_context ctx = {0};
+	exec_expr(root, &ctx, &res);
 	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
 
 	return 0;
