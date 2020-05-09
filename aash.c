@@ -532,7 +532,8 @@ void exec_apply_redir(struct cmd_redirect *c)
 			new_stdout = open(c->stdout.fn->s,
 					  O_WRONLY
 					  | O_CREAT
-					  | (c->stdout.is_append ? O_APPEND : 0));
+					  | (c->stdout.is_append ? O_APPEND : 0),
+					  0644);
 			if (new_stdout < 0)
 				E("open");
 		}
@@ -546,7 +547,8 @@ void exec_apply_redir(struct cmd_redirect *c)
 			new_stderr = open(c->stderr.fn->s,
 					  O_WRONLY
 					  | O_CREAT
-					  | (c->stderr.is_append ? O_APPEND : 0));
+					  | (c->stderr.is_append ? O_APPEND : 0),
+					  0644);
 			if (new_stderr < 0)
 				E("open");
 		}
