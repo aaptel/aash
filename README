@@ -11,6 +11,7 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - not (!a)
   - simple quoting ("foo bar", 'baz zblerx')
   - pipes (a | b)
+  - redirections (a > b; a 2>&1; a < b; a >> b)
   - subshells ( (a;b) )
 
 
@@ -18,7 +19,6 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - no background process (a &) (parsed but not ran)
   - no variables
   - no interactive mode
-  - no file redirection (a > file; a >> file; a &> file; a 2>&1)
   - no compounded commands (if,for,while,until,case,...)
   - ...
 

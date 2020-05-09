@@ -130,8 +130,6 @@ redirect_list(R) ::= redirect_list(A) io_redirect(B). {
 io_redirect(R) ::= io_file(A).              { R = A; R.stream = 1; }
 io_redirect(R) ::= IO_NUMBER(N) io_file(A). { R = A; R.stream = atoi(N->s); }
 
-// TODO store redirect list in expr for cmpd_comands & simple commands
-
 // we set the mode and input/dest of the redirect
 io_file(R) ::= REDIR_OUT(M) WORD(D).    { stream_redirect_init(&R, M, D); }
 io_file(R) ::= REDIR_IN(M) WORD(D).     { stream_redirect_init(&R, M, D); }

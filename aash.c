@@ -3,10 +3,12 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <sys/wait.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "dbg.h"
 #include "ast.h"
@@ -463,6 +465,47 @@ struct exec_context {
 
 #define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
 
+
+void exec_apply_redir(struct cmd_redirect *c)
+{
+	if (c->stdin.is_set) {
+		int new_stdin;
+		assert(!c->stdin.is_fd);
+		new_stdin = open(c->stdin.fn->s, O_RDONLY);
+		if (new_stdin < 0)
+			E("open");
+		dup2(new_stdin, 0);
+	}
+	if (c->stdout.is_set) {
+		int new_stdout;
+		if (c->stdout.is_fd) {
+			new_stdout = c->stdout.fd;
+		} else {
+			new_stdout = open(c->stdout.fn->s,
+					  O_WRONLY
+					  | O_CREAT
+					  | (c->stdout.is_append ? O_APPEND : 0));
+			if (new_stdout < 0)
+				E("open");
+		}
+		dup2(new_stdout, 1);
+	}
+	if (c->stderr.is_set) {
+		int new_stderr;
+		if (c->stderr.is_fd) {
+			new_stderr = c->stderr.fd;
+		} else {
+			new_stderr = open(c->stderr.fn->s,
+					  O_WRONLY
+					  | O_CREAT
+					  | (c->stderr.is_append ? O_APPEND : 0));
+			if (new_stderr < 0)
+				E("open");
+		}
+		dup2(new_stderr, 2);
+	}
+}
+
 void exec_expr(struct expr *e, struct exec_context *res)
 {
 	int i;
@@ -490,6 +533,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 				if (e->simple_cmd.words[i]->type == TOK_WORD)
 					argv[j++] = e->simple_cmd.words[i]->s;
 			}
+			exec_apply_redir(&e->simple_cmd.redir);
 			execvp(argv[0], argv);
 			exit(1);
 		}
@@ -572,6 +616,7 @@ void exec_expr(struct expr *e, struct exec_context *res)
 			E("fork");
 
 		if (child == 0) {
+			exec_apply_redir(&e->sub.redir);
 			exec_expr(e->sub.expr, res);
 			exit(FAILED(res->status) ? 1 : 0);
 		}
@@ -614,7 +659,7 @@ int main(void)
 
 	printf("=== RUNNING ===\n");
 
-	struct exec_context res;
+	struct exec_context res = {0};
 	exec_expr(root, &res);
 	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
 
