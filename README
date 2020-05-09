@@ -13,10 +13,10 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - pipes (a | b)
   - redirections (a > b; a 2>&1; a < b; a >> b)
   - subshells ( (a;b) )
-
+  - background process (a &)
+  - builtin (only 'wait' for now)
 
 * unsupported stuff so far:
-  - no background process (a &) (parsed but not ran)
   - no variables
   - no interactive mode
   - no compounded commands (if,for,while,until,case,...)
@@ -30,62 +30,118 @@ build
 usage
 =====
 
-
-    echo '(echo aa; echo "a b"; echo bb) | grep b | grep a && false' | ./aash
+    # sample script
+    $ echo '( echo aa && echo ab && echo bb ) | grep a | grep b > file ; cat file
+            ( sleep 5 ; echo done ) &
+            echo wait
+            wait
+            echo exiting
+    ' > test.sh
+    # run it
+    $ ./aash < test.sh
     === LEXING ===
+    TOK: NEWLINE
+    TOK: NEWLINE
     TOK: LPAREN (
     TOK: WORD <echo>
     TOK: WORD <aa>
-    TOK: SEMICOL ;
+    TOK: AND
     TOK: WORD <echo>
-    TOK: WORD <a b>
-    TOK: SEMICOL ;
+    TOK: WORD <ab>
+    TOK: AND
     TOK: WORD <echo>
     TOK: WORD <bb>
     TOK: RPAREN )
     TOK: PIPE
     TOK: WORD <grep>
-    TOK: WORD <b>
+    TOK: WORD <a>
     TOK: PIPE
     TOK: WORD <grep>
-    TOK: WORD <a>
-    TOK: AND
-    TOK: WORD <false>
+    TOK: WORD <b>
+    TOK: REDIR >
+    TOK: WORD <file>
+    TOK: SEMICOL ;
+    TOK: WORD <cat>
+    TOK: WORD <file>
+    TOK: NEWLINE
+    TOK: LPAREN (
+    TOK: WORD <sleep>
+    TOK: WORD <5>
+    TOK: SEMICOL ;
+    TOK: WORD <echo>
+    TOK: WORD <done>
+    TOK: RPAREN )
+    TOK: BG &
+    TOK: NEWLINE
+    TOK: WORD <echo>
+    TOK: WORD <wait>
+    TOK: NEWLINE
+    TOK: WORD <wait>
+    TOK: NEWLINE
+    TOK: WORD <echo>
+    TOK: WORD <exiting>
     TOK: NEWLINE
     TOK: NONE
     === PARSING ===
     PROG {
       PROG {
-        AND {
+        PIPE {
           left {
             PIPE {
               left {
-                PIPE {
-                  left {
-                    SUBSHELL {
-                      PROG {
-                        CMD <echo> <aa>
-                        CMD <echo> <a b>
-                        CMD <echo> <bb>
+                SUBSHELL REDIR  {
+                  PROG {
+                    AND {
+                      left {
+                        AND {
+                          left {
+                            CMD <echo> <aa> REDIR 
+                          }
+                          right {
+                            CMD <echo> <ab> REDIR 
+                          }
+                        }
+                      }
+                      right {
+                        CMD <echo> <bb> REDIR 
                       }
                     }
-                  }
-                  right {
-                    CMD <grep> <b>
                   }
                 }
               }
               right {
-                CMD <grep> <a>
+                CMD <grep> <a> REDIR 
               }
             }
           }
           right {
-            CMD <false>
+            CMD <grep> <b> REDIR stdout=fn<file> 
+          }
+        }
+        CMD <cat> <file> REDIR 
+      }
+      PROG {
+        (in bg)     SUBSHELL REDIR  {
+          PROG {
+            CMD <sleep> <5> REDIR 
+            CMD <echo> <done> REDIR 
           }
         }
       }
+      PROG {
+        CMD <echo> <wait> REDIR 
+      }
+      PROG {
+        CMD <wait> REDIR 
+      }
+      PROG {
+        CMD <echo> <exiting> REDIR 
+      }
     }
     === RUNNING ===
-    a b
-    RESULT = 256 (exit code=1)
+    ab
+    wait
+    done
+    exiting
+    RESULT = 0 (exit code=0)
+
