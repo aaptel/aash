@@ -10,6 +10,7 @@ enum token_type {
 	TOK_REDIR_OUT    = 100,
 	TOK_REDIR_IN     = 101,
 	TOK_REDIR_APPEND = 102,
+	TOK_ASSIGN       = 104,
 };
 
 /* Use to store tokens */
@@ -81,3 +82,4 @@ void Parse(void *, int, struct str *, struct expr **);
 void ParseFree(void *, void (*fun)(void *));
 
 struct expr *expr_new(enum expr_type);
+void expr_simple_cmd_add_word(struct expr *e, struct str *w);

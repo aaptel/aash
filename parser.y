@@ -98,11 +98,11 @@ term(R) ::= and_or(E). {
 
 simple_command(R) ::= WORD(W). {
 	R = expr_new(EXPR_SIMPLE_CMD);
-	PUSH(&R->simple_cmd, words, W);
+	expr_simple_cmd_add_word(R, W);
 }
 simple_command(R) ::= simple_command(E) WORD(W). {
 	R = E;
-	PUSH(&R->simple_cmd, words, W);
+	expr_simple_cmd_add_word(R, W);
 }
 
 separator_op(R) ::= SEMICOL(T). { R = T; }

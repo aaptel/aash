@@ -234,6 +234,20 @@ void dump_token(struct str *tok)
 	}
 }
 
+void expr_simple_cmd_add_word(struct expr *e, struct str *w)
+{
+	struct expr_simple_cmd *c = &e->simple_cmd;
+	/*
+	 * if we are adding the first word or if we only added
+	 * assignment words and the word is an assignement, make it an
+	 * assignement
+	 */
+	if ((c->size == 0 || c->words[c->size-1]->type == TOK_ASSIGN) && strchr(w->s, '=')) {
+		w->type = TOK_ASSIGN;
+	}
+	PUSH(c, words, w);
+}
+
 void indent(int n)
 {
 	int i;
