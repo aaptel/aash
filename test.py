@@ -142,9 +142,7 @@ def test_subshell_expand():
     err += run_arg_expansion(r''' $(echo a "$(echo b)") ''', ['a', 'b'])
     err += run_arg_expansion(r''' $(echo a "$(echo a b)") ''', ['a', 'a', 'b'])
     err += run_arg_expansion(r''' $(echo a | grep a) ''', ['a'])
-
-    # fork bomb bug?
-    # err += run_arg_expansion(r''' $( (echo a;echo b) | grep a) ''', ['a'])
+    err += run_arg_expansion(r''' $( (echo a;echo b) | grep a) ''', ['a'])
 
     if err > 0:
         raise MismatchError("%d mismatches"%err)
