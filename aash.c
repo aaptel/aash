@@ -15,6 +15,10 @@
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 
+/*
+ * Lexing
+ */
+
 struct input {
 	FILE *fh;
 	bool eof;
@@ -469,7 +473,37 @@ struct exec_context {
 	pid_t *bg_jobs;
 	size_t size;
 	size_t capa;
+
+	struct vars {
+		struct binding {
+			char *name;
+			char *value;
+		} *bindings;
+		size_t size;
+		size_t capa;
+	} vars;
 };
+
+void exec_set_binding(struct exec_context *exec, const char *name, const char *val)
+{
+	int i;
+
+	for (i = 0; i < exec->vars.size; i++) {
+		struct binding *v = &exec->vars.bindings[i];
+		if (strcmp(name, v->name) == 0) {
+			free(v->value);
+			v->value = strdup(val);
+			return;
+		}
+	}
+
+	struct binding newv = {
+		.name = strdup(name),
+		.value = strdup(val),
+	};
+
+	PUSH(&exec->vars, bindings, newv);
+}
 
 /*
  * Shell builtins
@@ -512,6 +546,157 @@ builtin_func_t builtin_find(const char *name)
 	}
 	return NULL;
 }
+
+/*
+ * String expansion and re-parsing... shell is fucked up
+ */
+
+struct expand_context {
+	struct str **words;
+	size_t size;
+	size_t capa;
+	int in_quote;
+};
+
+#define MAX_VAR_NAME_SIZE 32
+char* read_var(char *s, char *name)
+{
+	char *out = name;
+	bool in_brace = false;
+
+	if (*s == '{') {
+		in_brace = true;
+		s++;
+	}
+	for (; *s; s++) {
+		if (in_brace) {
+			if (*s == '}')
+				goto out;
+		}
+		else {
+			if (!isalnum(*s) && *s != '_') {
+				s--;
+				goto out;
+			}
+		}
+		if ((out-name)+1 < MAX_VAR_NAME_SIZE)
+			*out++ = *s;
+		else
+			goto out;
+
+	}
+ out:
+	*out = '\0';
+	return *s ? s : s-1;
+}
+
+void expand_push(struct expand_context *exp, char c)
+{
+	if (exp->size == 0) {
+		struct str *w = str_new();
+		PUSH(exp, words, w);
+	}
+
+	str_push(exp->words[exp->size-1], c);
+}
+
+void expand_next_word(struct expand_context *exp)
+{
+	if (exp->size > 0) {
+		if (exp->words[exp->size-1]->size > 0) {
+			struct str *w = str_new();
+			PUSH(exp, words, w);
+		}
+	}
+}
+
+void expand_push_var(struct exec_context *exec, struct expand_context *exp, const char *var)
+{
+	int i;
+	for (i = 0; i < exec->vars.size; i++) {
+		struct binding *v = &exec->vars.bindings[i];
+		if (strcmp(var, v->name) == 0) {
+			const char *s = v->value;
+			for (; *s; s++) {
+				if (exp->in_quote)
+					expand_push(exp, *s);
+				else {
+					if (strchr(" \n\t", *s))
+						expand_next_word(exp);
+					else
+						expand_push(exp, *s);
+				}
+			}
+		}
+	}
+}
+
+void exec_expand(struct exec_context *exec, struct expand_context *exp, struct str *in)
+{
+	char *s = in->s;
+	exp->in_quote = 0;
+
+	for (s = in->s; *s; s++) {
+		char c = *s, c2 = *(s+1);
+
+		if (exp->in_quote) {
+			if (c == exp->in_quote) {
+				exp->in_quote = 0;
+				continue;
+			}
+			if (c == '\\') {
+				if (!c2) {
+					expand_push(exp, c);
+					goto out;
+				}
+				expand_push(exp, c2);
+				s++;
+				continue;
+			}
+			if (exp->in_quote == '"' && c == '$') {
+				if (c2 == '{' || c2 == '_' || isalnum(c2)) {
+					char var_name[MAX_VAR_NAME_SIZE];
+
+					s = read_var(s+1, var_name);
+					expand_push_var(exec, exp, var_name);
+					continue;
+				}
+			}
+			expand_push(exp, c);
+		} else {
+			if (strchr("\"'", c)) {
+				exp->in_quote = c;
+				continue;
+			}
+			if (c == '\\') {
+				if (!c2) {
+					expand_push(exp, c);
+					goto out;
+				}
+				expand_push(exp, c2);
+				s++;
+				continue;
+			}
+			if (c == '$') {
+				if (c2 == '{' || c2 == '_' || isalnum(c2)) {
+					char var_name[MAX_VAR_NAME_SIZE];
+
+					s = read_var(s+1, var_name);
+					expand_push_var(exec, exp, var_name);
+					continue;
+				}
+			}
+			expand_push(exp, c);
+		}
+	}
+ out:
+	return;
+}
+
+
+/*
+ * Execution
+ */
 
 #define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
 
@@ -557,6 +742,76 @@ void exec_apply_redir(struct cmd_redirect *c)
 	}
 }
 
+void exec_assign(struct exec_context *exec, struct str *w)
+{
+	struct expand_context expd = {0};
+	struct str tmp = {0};
+	struct str *expanded;
+	char name[MAX_VAR_NAME_SIZE] = {0};
+	char *value;
+	char *eq;
+	int i, j;
+
+	/* extract name & value ptr */
+	eq = strchr(w->s, '=');
+	assert(eq);
+	value = eq+1;
+	memcpy(name, w->s, eq - w->s);
+
+	/* expand value */
+	tmp.s = value;
+	tmp.size = strlen(value);
+	exec_expand(exec, &expd, &tmp);
+
+	/* generate expanded struct str */
+	expanded = str_new();
+	int added = 0;
+	for (i = 0; i < expd.size; i++) {
+		if (added) {
+			str_push(expanded, ' ');
+			added = 0;
+		}
+		for (j = 0; j < expd.words[i]->size; j++) {
+			str_push(expanded, expd.words[i]->s[j]);
+			added++;
+		}
+	}
+
+	/* store var */
+	exec_set_binding(exec, name, expanded->s);
+
+	/* done */
+	str_free(expanded);
+}
+
+void exec_cmd(struct expr *expr, struct exec_context *exec)
+{
+	struct expand_context expd = {0};
+	int i;
+
+	/*
+	 * We are in the child and about to exec, no need to worry
+	 * about freeing memory
+	 */
+
+	for (i = 0; i < expr->simple_cmd.size; i++) {
+		struct str *w = expr->simple_cmd.words[i];
+		// discard assignements
+		if (w->type == TOK_WORD) {
+			exec_expand(exec, &expd, w);
+			expand_next_word(&expd);
+		}
+	}
+
+	char **argv = calloc(sizeof(*argv), expd.size+1);
+	for (i = 0; i < expd.size; i++) {
+		argv[i] = expd.words[i]->s;
+	}
+	exec_apply_redir(&expr->simple_cmd.redir);
+	execvp(argv[0], argv);
+	exit(1);
+}
+
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
 {
 	int i;
@@ -584,6 +839,12 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			exec_expr(e->prog.cmds[i], ctx, res);
 		break;
 	case EXPR_SIMPLE_CMD:
+		/* simple cmd is also used for assignments... */
+		if (e->simple_cmd.size == 1 && e->simple_cmd.words[0]->type == TOK_ASSIGN) {
+			exec_assign(ctx, e->simple_cmd.words[0]);
+			res->status = 0;
+			goto out;
+		}
 		/* check builtins */
 		func = builtin_find(e->simple_cmd.words[0]->s);
 		if (func) {
@@ -597,15 +858,8 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 		if (res->pid == 0) {
 			/* child */
-			char **argv = calloc(sizeof(*argv), e->simple_cmd.size+1);
-			int j = 0;
-			for (i = 0; i < e->simple_cmd.size; i++) {
-				// discard assignements
-				if (e->simple_cmd.words[i]->type == TOK_WORD)
-					argv[j++] = e->simple_cmd.words[i]->s;
-			}
-			exec_apply_redir(&e->simple_cmd.redir);
-			execvp(argv[0], argv);
+			exec_cmd(e, ctx);
+			/* should never return */
 			exit(1);
 		}
 

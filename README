@@ -9,15 +9,16 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - and (a && b)
   - or (a || b)
   - not (!a)
-  - simple quoting ("foo bar", 'baz zblerx')
+  - basic quoting ("foo bar", 'baz zblerx')
   - pipes (a | b)
   - redirections (a > b; a 2>&1; a < b; a >> b)
   - subshells ( (a;b) )
   - background process (a &)
   - builtin (only 'wait' for now)
+  - variable assignement and reference (var=foo ; echo "$var" ${var} '$var' )
 
 * unsupported stuff so far:
-  - no variables
+  - no subshell expansion $(foo) `bar` (parsed but not expanded)
   - no interactive mode
   - no compounded commands (if,for,while,until,case,...)
   - ...
