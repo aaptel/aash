@@ -16,7 +16,7 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - background process (a &)
   - builtin (only 'wait' for now)
   - variable assignement and reference (var=foo ; echo "$var" ${var} '$var' )
-  - subshell expansion $(foo $(bar) ) (BUGGY)
+  - subshell expansion $(foo $(bar) )
 
 * unsupported stuff so far:
   - no interactive mode

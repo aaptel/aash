@@ -39,8 +39,11 @@ def main():
 
 def test_background():
     err = 0
-    err += run_script('echo start; ( sleep 0; echo done ) & echo waiting ; wait ; echo finish',
-                      'start\nwaiting\ndone\nfinish\n', '', 0)
+    err += run_script(
+        '''echo start ; ( sleep 0; echo done ) &
+        echo waiting ; wait
+        echo finish''',
+        'start\nwaiting\ndone\nfinish\n', '', 0)
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
@@ -142,8 +145,24 @@ def test_subshell_expand():
     err += run_arg_expansion(r''' $(echo a "$(echo b)") ''', ['a', 'b'])
     err += run_arg_expansion(r''' $(echo a "$(echo a b)") ''', ['a', 'a', 'b'])
     err += run_arg_expansion(r''' $(echo a | grep a) ''', ['a'])
-    err += run_arg_expansion(r''' $( (echo a;echo b) | grep a) ''', ['a'])
+    err += run_arg_expansion(r''' $( (echo a;echo b)|grep a) ''', ['a'])
 
+    # POSIX tells us $(( is start of arithmetic expression... ignore
+    err += run_arg_expansion(r''' $((echo a;echo b)|grep a) ''', ['a'])
+
+    # weird nesting and quotes...
+    err += run_arg_expansion(r''' $( (echo a;echo b)|grep a && (echo a;echo $(echo b))|grep b) ''', ['a', 'b'])
+    err += run_arg_expansion(r''' "$( echo "$(echo a)" )" ''', ['a'])
+    err += run_arg_expansion(r''' "$( echo '$(echo a)' )" ''', ['$(echo a)'])
+
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
+
+def test_vars():
+    err = 0
+    err += run_script('var="echo foo"; $var', 'foo\n', '', 0)
+    err += run_script('var=a; echo $var; var=b; echo $var', 'a\nb\n', '', 0)
+    err += run_script('var="$(echo a b)"; echo $var', 'a b\n', '', 0)
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
