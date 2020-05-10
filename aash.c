@@ -512,6 +512,8 @@ struct exec_context {
 	} vars;
 };
 
+void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res);
+
 void exec_set_binding(struct exec_context *exec, const char *name, const char *val)
 {
 	int i;
@@ -586,7 +588,7 @@ struct expand_context {
 	int in_quote;
 };
 
-char* read_var(char *s, char *name)
+const char* read_var(const char *s, char *name)
 {
 	char *out = name;
 	bool in_brace = false;
@@ -658,9 +660,126 @@ void expand_push_var(struct exec_context *exec, struct expand_context *exp, cons
 	}
 }
 
+const char* expand_push_subshell(struct exec_context *exec, struct expand_context *expd, const char *s)
+{
+	struct expr *root;
+	void *parser;
+	const char *end;
+	struct str *tok;
+	struct str *output;
+	int rparen_left;
+	pid_t pid, rcpid;
+	int rc, status;
+	int pipefd[2];
+	int i;
+
+	struct input in = {
+		.type = INPUT_STR,
+		.start = s,
+		.s = s,
+		.len = strlen(s),
+	};
+
+	/*
+	 * Read all tokens until parens are balanced or we reach end
+	 * of the word
+	 */
+
+	rparen_left = 1;
+	parser = ParseAlloc(malloc);
+	while (1) {
+		tok = read_token(&in);
+		if (tok->type == TOK_LPAREN)
+			rparen_left++;
+		else if (tok->type == TOK_RPAREN) {
+			rparen_left--;
+			if (rparen_left == 0)
+				break;
+		}
+		else if (tok->type == TOK_NONE) {
+			break;
+		}
+
+		Parse(parser, tok->type, tok, &root);
+	}
+
+	/* end points to next char after final ), or EOF */
+	end = in.s-1;
+
+	/*
+	 * Parse subshell
+	 */
+
+	Parse(parser, TOK_NONE, NULL, &root);
+	ParseFree(parser, free);
+
+	/*
+	 * Execute it in subprocess and capture output
+	 */
+
+	rc = pipe(pipefd);
+	if (rc < 0)
+		E("pipe");
+
+	pid = fork();
+	if (pid < 0)
+		E("fork");
+
+	if (pid == 0) {
+		/* child */
+		struct exec_context sub_exec = {0};
+		struct exec_result sub_res = {0};
+
+		close(pipefd[0]);
+		dup2(pipefd[1], 1);
+		exec_expr(root, &sub_exec, &sub_res);
+		exit(STATUS_TO_EXIT(sub_res.status));
+	}
+
+	close(pipefd[1]);
+	output = str_new();
+	while (1) {
+		char buf[128];
+		ssize_t nread;
+
+		nread = read(pipefd[0], buf, sizeof(buf));
+		if (nread < 0) {
+			perror("read");
+			E("read");
+		}
+		if (nread == 0)
+			break;
+		for (i = 0; i < nread; i++) {
+			str_push(output, buf[i]);
+		}
+	}
+
+	rcpid = waitpid(pid, &status, 0);
+	if (rcpid < 0)
+		E("waitpid");
+
+
+	// remove trailing whilespace
+	for (i = output->size-1; i >= 0 && isspace(output->s[i]); i--)
+		output->size--;
+
+	// push output
+	for (i = 0; i < output->size; i++) {
+		char c = output->s[i];
+		if (!expd->in_quote && isspace(c))
+			expand_next_word(expd);
+		else
+			expand_push(expd, c);
+	}
+
+	// TODO: free tokens and exprs
+
+	return end;
+}
+
 void exec_expand(struct exec_context *exec, struct expand_context *exp, struct str *in)
 {
-	char *s = in->s;
+	const char *s = in->s;
 	exp->in_quote = 0;
 
 	for (s = in->s; *s; s++) {
@@ -688,6 +807,10 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 					expand_push_var(exec, exp, var_name);
 					continue;
 				}
+				if (c2 == '(') {
+					 s = expand_push_subshell(exec, exp, s+2);
+					 continue;
+				}
 			}
 			expand_push(exp, c);
 		} else {
@@ -711,6 +834,10 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 					s = read_var(s+1, var_name);
 					expand_push_var(exec, exp, var_name);
 					continue;
+				}
+				if (c2 == '(') {
+					 s = expand_push_subshell(exec, exp, s+2);
+					 continue;
 				}
 			}
 			expand_push(exp, c);
