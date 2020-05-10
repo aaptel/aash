@@ -7,11 +7,12 @@ import argparse
 from pprint import pprint as P
 
 PROG = './aash'
+TIMEOUT = 1
 OPTS = None
 
 def main():
     ap = argparse.ArgumentParser(description="aash tester script")
-    ap.add_argument("-v", "--verbose", action="store_true", help="show detailed output")
+    ap.add_argument("-v", "--verbose", action="count", default=0, help="show detailed output")
     ap.add_argument("-s", "--stop", action="store_true", help="stop on failure and show detailed output")
     ap.add_argument("-f", "--filter",  help="filter test names")
     ap.add_argument("-l", "--list", action="store_true", help="list tests")
@@ -32,7 +33,7 @@ def main():
             except TestException as e:
                 reserr(e, end='')
             else:
-                ok("OK", end='')
+                resok("OK", end='')
             finally:
                 print('\n')
 
@@ -122,9 +123,29 @@ def test_arg_expansion():
 def test_subshell_expand():
     err = 0
     err += run_arg_expansion(r''' $(echo a) ''', ['a'])
+    err += run_arg_expansion(r''' "$(echo a)" ''', ['a'])
+    err += run_arg_expansion(r''' '$(echo a)' ''', ['$(echo a)'])
+    err += run_arg_expansion(r''' x$(echo a)x ''', ['xax'])
+    err += run_arg_expansion(r''' "x$(echo a)x" ''', ['xax'])
     err += run_arg_expansion(r''' $(echo a b) ''', ['a', 'b'])
-    err += run_arg_expansion(r''' "$(echo a b)" ''', ['a b'])
     err += run_arg_expansion(r''' '$(echo a b)' ''', ['$(echo a b)'])
+    err += run_arg_expansion(r''' x$(echo a b)x ''', ['xa', 'bx'])
+    err += run_arg_expansion(r''' "$(echo a b)" ''', ['a b'])
+    err += run_arg_expansion(r''' "x$(echo a b)x" ''', ['xa bx'])
+    err += run_arg_expansion(r''' "x $(echo a b) x" ''', ['x a b x'])
+
+    # nesting...
+    err += run_arg_expansion(r''' $(echo a $(echo b)) ''', ['a','b'])
+    err += run_arg_expansion(r''' "$(echo a $(echo b))" ''', ['a b'])
+    err += run_arg_expansion(r''' "$(echo a '$(echo b)')" ''', ['a $(echo b)'])
+    err += run_arg_expansion(r''' "$(echo a "$(echo b)")" ''', ['a b'])
+    err += run_arg_expansion(r''' $(echo a "$(echo b)") ''', ['a', 'b'])
+    err += run_arg_expansion(r''' $(echo a "$(echo a b)") ''', ['a', 'a', 'b'])
+    err += run_arg_expansion(r''' $(echo a | grep a) ''', ['a'])
+
+    # fork bomb bug?
+    # err += run_arg_expansion(r''' $( (echo a;echo b) | grep a) ''', ['a'])
+
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
@@ -132,29 +153,30 @@ def run_script(script, exp_out, exp_err, exp_rc):
     r = run(script)
     rposix = run_posix(script)
 
-    if OPTS.verbose:
+    if OPTS.verbose >= 2:
         print('  ', '-'*70, '\n', r, sep='', end='')
 
     out = (r.scriptout, r.stderr, r.scriptrc)
     pox = (rposix.stdout, rposix.stderr, rposix.returncode)
     exp = (exp_out, exp_err, exp_rc)
 
-    if pox != exp:
-        warn("%-40s POSIX %s EXPECTED %s"%(script, pox, exp))
     if out != exp:
         err("%-40s GOT %s EXPECTED %s"%(script, out, exp))
         if OPTS.stop:
             print('  ', '-'*70, '\n', r, sep='', end='')
             exit(1)
         return 1
-
+    if pox != exp:
+        warn("%-40s POSIX %s EXPECTED %s"%(script, pox, exp))
+    if OPTS.verbose >= 1 and out == exp:
+        ok("%-40s => %s"%(script, out))
     return 0
 
 def run_arg_expansion(arg, expected, pre=''):
     r = run(pre+'./dump_argv '+arg)
     out = re.findall(r'''^<(.*?)>$''', r.scriptout, flags=(re.M|re.S))
 
-    if OPTS.verbose:
+    if OPTS.verbose >= 2:
         print('  ', '-'*70, '\n', r, sep='', end='')
 
     rr = run_posix(pre+'./dump_argv '+arg)
@@ -172,11 +194,15 @@ def run_arg_expansion(arg, expected, pre=''):
             print('  ', '-'*70, '\n', r, sep='', end='')
             exit(1)
         return 1
-    #err('%-40s => %s'%(arg, out))
+    if OPTS.verbose >= 1 and out == expected:
+        ok('%-40s => %s'%(arg, out))
     return 0
 
 def run(script):
-    r = sp.run(PROG, input=script, timeout=6, encoding='utf-8', capture_output=True)
+    try:
+        r = sp.run(PROG, input=script, timeout=1, encoding='utf-8', capture_output=True)
+    except sp.TimeoutExpired as e:
+        raise TimeoutError("process took over %ds"%TIMEOUT) from e
     if r.returncode < 0:
         raise SignalError('signaled %d'%(-r.returncode), r)
     if r.returncode > 0:
@@ -234,6 +260,9 @@ class ExitError(TestException):
 class MismatchError(TestException):
     def __init__(self, message):
         super().__init__(message)
+class TimeoutError(TestException):
+    def __init__(self, message):
+        super().__init__(message)
 
 # class Unbuffered(object):
 #    def __init__(self, stream):
@@ -263,13 +292,16 @@ def escnl(s):
 def err(*args, end='\n'):
     printcol('31', '  FAIL:', *args, end=end)
 
+def ok(*args, end='\n'):
+    printcol('32', '  OK:  ', *args, end=end)
+
 def reserr(*args, end='\n'):
     printcol('31;1', *args, end=end)
 
 def warn(*args, end='\n'):
-    printcol('33', '  ', *args, end=end)
+    printcol('33', '  WARN:', *args, end=end)
 
-def ok(*args, end='\n'):
+def resok(*args, end='\n'):
     printcol('32;1', *args, end=end)
 
 def printcol(col, *args, end='\n'):
