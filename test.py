@@ -208,7 +208,7 @@ def run(script):
     if r.returncode > 0:
         raise ExitError('exit failure %d'%(r.returncode), r)
     if 'syntax error' in r.stdout or 'syntax error' in r.stderr:
-        raise ParseError('parse error', r)
+        raise ParseError('parse error', script, r)
     return Result(script, r)
 
 def run_posix(script):
@@ -246,9 +246,12 @@ class SignalError(TestException):
         super().__init__(message)
         self.result = result
 class ParseError(TestException):
-    def __init__(self, message, result):
+    def __init__(self, message, script, result):
         super().__init__(message)
+        self.script = script
         self.result = result
+    def __str__(self):
+        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
 class OutputError(TestException):
     def __init__(self, message, result):
         super().__init__(message)
