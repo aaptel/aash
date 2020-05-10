@@ -14,6 +14,11 @@
 #include "ast.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
+#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
+#define STATUS_TO_EXIT(s) (WIFEXITED(s) ? WEXITSTATUS(s) : 1)
+
+#define MAX_VAR_NAME_SIZE 32
+
 
 /*
  * Lexing
@@ -573,7 +578,6 @@ struct expand_context {
 	int in_quote;
 };
 
-#define MAX_VAR_NAME_SIZE 32
 char* read_var(char *s, char *name)
 {
 	char *out = name;
@@ -712,8 +716,6 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 /*
  * Execution
  */
-
-#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
 
 void exec_apply_redir(struct cmd_redirect *c)
 {
@@ -905,7 +907,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_NOT:
 		/* inverse failure and success */
 		exec_expr(e->not.expr, ctx, res);
-		res->status = FAILED(res->status) ? W_EXITCODE(0, 0) : W_EXITCODE(1, 0);
+		res->status = W_EXITCODE(!STATUS_TO_EXIT(res->status), 0);
 		break;
 	case EXPR_PIPE:
 	{
@@ -927,7 +929,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			close(pipefd[0]);
 			close(pipefd[1]);
 			exec_expr(e->and_or.left, ctx, res);
-			exit(FAILED(res->status) ? 1 : 0);
+			exit(STATUS_TO_EXIT(res->status));
 		}
 
 		right = fork();
@@ -939,7 +941,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			close(pipefd[0]);
 			close(pipefd[1]);
 			exec_expr(e->and_or.right, ctx, res);
-			exit(FAILED(res->status) ? 1 : 0);
+			exit(STATUS_TO_EXIT(res->status));
 		}
 
 		close(pipefd[0]);
@@ -958,7 +960,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		if (child == 0) {
 			exec_apply_redir(&e->sub.redir);
 			exec_expr(e->sub.expr, ctx, res);
-			exit(FAILED(res->status) ? 1 : 0);
+			exit(STATUS_TO_EXIT(res->status));
 		}
 
 		rcpid = waitpid(child, &res->status, 0);
@@ -973,7 +975,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
  out:
 	if (e->run_in_bg && bg_pid == 0) {
 		/* child */
-		exit(FAILED(res->status) ? 1 : 0);
+		exit(STATUS_TO_EXIT(res->status));
 	}
 	return;
 }
