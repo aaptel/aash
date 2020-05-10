@@ -247,7 +247,7 @@ struct str *read_token(struct input *in)
 			break;
 		case '|':
 			READ_DOUBLE_OP('|', TOK_PIPE, TOK_OR);
-			break;
+			goto out;
 		case '&':
 			READ_DOUBLE_OP('&', TOK_BG, TOK_AND);
 			goto out;
