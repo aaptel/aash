@@ -20,7 +20,14 @@
  */
 
 struct input {
-	FILE *fh;
+	enum input_type {
+		INPUT_FILE,
+		INPUT_STR,
+	} type;
+	union {
+		FILE *fh;
+		const char *s;
+	};
 	bool eof;
 	size_t nb_eof;
 };
@@ -38,8 +45,12 @@ void in_ungetc(struct input *in, int c)
 			E("unexpected ungetc EOF");
 		}
 	}
-	int r = ungetc(c, in->fh);
-	assert(r != EOF);
+	if (in->type == INPUT_FILE) {
+		int r = ungetc(c, in->fh);
+		assert(r != EOF);
+	} else {
+		in->s--;
+	}
 }
 
 int in_getc(struct input *in)
@@ -50,7 +61,11 @@ int in_getc(struct input *in)
 		c = EOF;
 		in->nb_eof++;
 	} else {
-		c = fgetc(in->fh);
+		if (in->type == INPUT_FILE)
+			c = fgetc(in->fh);
+		else
+			c = *in->s++;
+
 		if (c == EOF)
 			in->eof = true;
 	}
@@ -965,7 +980,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 int main(void)
 {
-	struct input in = {.fh = stdin};
+	struct input in = {.type = INPUT_FILE, .fh = stdin};
 	struct str *tok;
 	struct expr *root;
 	void *parser = ParseAlloc(malloc);
