@@ -31,7 +31,11 @@ struct input {
 	} type;
 	union {
 		FILE *fh;
-		const char *s;
+		struct {
+			const char *s;
+			const char *start;
+			size_t len;
+		};
 	};
 	bool eof;
 	size_t nb_eof;
@@ -54,6 +58,7 @@ void in_ungetc(struct input *in, int c)
 		int r = ungetc(c, in->fh);
 		assert(r != EOF);
 	} else {
+		assert(in->s > in->start);
 		in->s--;
 	}
 }
@@ -68,9 +73,12 @@ int in_getc(struct input *in)
 	} else {
 		if (in->type == INPUT_FILE)
 			c = fgetc(in->fh);
-		else
-			c = *in->s++;
-
+		else {
+			if (in->s >= in->s + in->len)
+				c = EOF;
+			else
+				c = *in->s++;
+		}
 		if (c == EOF)
 			in->eof = true;
 	}
