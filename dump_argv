@@ -1,0 +1,5 @@
+#!/usr/bin/python
+# simple script dumping delimited argv tokens
+import sys
+for a in sys.argv[1:]:
+    print("<%s>"%a)
