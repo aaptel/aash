@@ -22,12 +22,17 @@ struct str {
 #define PUSH(base, array, val)						\
 	do {								\
 		void *p;						\
+		size_t sz = sizeof(*(base)->array);			\
 		if ((base)->size >= (base)->capa) {			\
-			p = realloc((base)->array, (base)->capa+32);	\
+			p = realloc((base)->array,			\
+				    sz*((base)->capa+32));		\
 			if (!p)						\
 				E("oom");				\
 			(base)->array = p;				\
 			(base)->capa += 32;				\
+			memset((base)->array+(base)->size,		\
+			       0,					\
+			       sz*((base)->capa-(base)->size));		\
 		}							\
 		(base)->array[(base)->size++] = val;			\
 	} while(0)

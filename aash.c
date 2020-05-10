@@ -79,6 +79,7 @@ void str_push(struct str *str, char c)
 			E("oom");
 		str->s = p;
 		str->capa = new_capa;
+		memset(str->s+str->size, 0, str->capa-str->size);
 	}
 
 	str->s[str->size++] = c;
