@@ -98,7 +98,7 @@ int in_getc(struct input *in)
 		if (in->type == INPUT_FILE)
 			c = fgetc(in->fh);
 		else {
-			if (in->s >= in->s + in->len)
+			if (in->s >= in->start + in->len)
 				c = EOF;
 			else
 				c = *in->s++;
@@ -278,6 +278,7 @@ struct str *read_token(struct input *in)
 		switch (c = in_getc(in)) {
 		eof:
 		case EOF:
+			tok->type = TOK_NONE;
 			goto out;
 		case '#':
 			read_comment(in);
