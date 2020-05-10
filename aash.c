@@ -1005,6 +1005,7 @@ int main(void)
 	dump_expr(root, 0, false);
 
 	printf("=== RUNNING ===\n");
+	fflush(NULL);
 
 	struct exec_result res = {0};
 	struct exec_context ctx = {0};
