@@ -126,8 +126,12 @@ redirect_list(R) ::= redirect_list(A) io_redirect(B). {
 	cmd_redirect_merge(&R, &B);
 }
 
-// we set the source of the redirect (no number = stdout)
-io_redirect(R) ::= io_file(A).              { R = A; R.stream = 1; }
+// we set the source of the redirect (no number = < or 1>)
+io_redirect(R) ::= io_file(A). {
+	R = A;
+	if (!R.is_input)
+		R.stream = 1;
+}
 io_redirect(R) ::= IO_NUMBER(N) io_file(A). { R = A; R.stream = atoi(N->s); }
 
 // we set the mode and input/dest of the redirect
