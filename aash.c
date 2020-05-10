@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -18,7 +19,30 @@
 #define STATUS_TO_EXIT(s) (WIFEXITED(s) ? WEXITSTATUS(s) : 1)
 
 #define MAX_VAR_NAME_SIZE 32
+#define LOG_FILE "log.txt"
 
+FILE *g_log = NULL;
+
+void log_write(const char *format, ...)
+{
+	/*
+	 * Need to be run at least once by main process so that forks
+	 * can inherit it
+	 */
+	va_list args;
+
+	if (!g_log) {
+		g_log = fopen(LOG_FILE, "w+");
+		if (!g_log)
+			E("fopen");
+	}
+
+	va_start(args, format);
+	vfprintf(g_log, format, args);
+	va_end(args);
+
+	fflush(g_log);
+}
 
 /*
  * Lexing
@@ -680,6 +704,8 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 		.len = strlen(s),
 	};
 
+	L("s=<%s>", s);
+
 	/*
 	 * Read all tokens until parens are balanced or we reach end
 	 * of the word
@@ -730,6 +756,7 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 		struct exec_context sub_exec = {0};
 		struct exec_result sub_res = {0};
 
+		L("in child");
 		close(pipefd[0]);
 		dup2(pipefd[1], 1);
 		exec_expr(root, &sub_exec, &sub_res);
@@ -762,6 +789,8 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 	// remove trailing whilespace
 	for (i = output->size-1; i >= 0 && isspace(output->s[i]); i--)
 		output->size--;
+
+	L("output=<%.*s>", output->size, output->s);
 
 	// push output
 	for (i = 0; i < output->size; i++) {
@@ -1121,6 +1150,8 @@ int main(void)
 	struct str *tok;
 	struct expr *root;
 	void *parser = ParseAlloc(malloc);
+
+	L("initializing log");
 
 	printf("=== LEXING ===\n");
 
