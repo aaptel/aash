@@ -161,10 +161,41 @@ bool is_word_all_digits(struct str *w)
 	return true;
 }
 
+const char *token_to_string(struct str *);
+struct str *read_token(struct input *in);
+
+void read_word_subshell(struct input *in, struct str *output)
+{
+	struct str *tok;
+	int rparen_left = 1;
+	const char *s;
+
+	while (1) {
+		tok = read_token(in);
+		str_push(output, ' ');
+		for (s = token_to_string(tok); *s; s++)
+			str_push(output, *s);
+
+		if (tok->type == TOK_LPAREN)
+			rparen_left++;
+		else if (tok->type == TOK_RPAREN) {
+			rparen_left--;
+			if (rparen_left == 0)
+				break;
+		}
+		else if (tok->type == TOK_NONE) {
+			break;
+		}
+
+		str_free(tok);
+	}
+
+	str_free(tok);
+}
+
 struct str *read_word(struct input *in, struct str *tok)
 {
 	int in_quote = 0;
-	int in_shellexp = 0; // $( .. )
 	int c;
 	int c2;
 
@@ -173,13 +204,7 @@ struct str *read_word(struct input *in, struct str *tok)
 	while ((c = in_getc(in)) != EOF) {
 		if (in_quote) {
 			if (c == in_quote) {
-				if (in_quote == ')') {
-					in_shellexp--;
-					if (in_shellexp == 0)
-						in_quote = 0;
-				} else {
-					in_quote = 0;
-				}
+				in_quote = 0;
 			}
 			else if (c == '$') {
 				c2 = in_getc(in);
@@ -187,9 +212,11 @@ struct str *read_word(struct input *in, struct str *tok)
 					str_push(tok, c);
 					goto out;
 				}
-				if (c2 == '(' && in_quote == ')') {
-					assert(in_shellexp > 0);
-					in_shellexp++;
+				if (in_quote == '"' && c2 == '(') {
+					str_push(tok, c);
+					str_push(tok, c2);
+					read_word_subshell(in, tok);
+					continue;
 				}
 				str_push(tok, c);
 				str_push(tok, c2);
@@ -227,9 +254,10 @@ struct str *read_word(struct input *in, struct str *tok)
 					goto out;
 				}
 				if (c2 == '(') {
-					in_quote = ')';
-					assert(in_shellexp == 0);
-					in_shellexp++;
+					str_push(tok, c);
+					str_push(tok, c2);
+					read_word_subshell(in, tok);
+					continue;
 				}
 				str_push(tok, c);
 				str_push(tok, c2);
@@ -337,6 +365,30 @@ struct expr *expr_new(enum expr_type type)
 	struct expr *expr = calloc(1, sizeof(*expr));
 	expr->type = type;
 	return expr;
+}
+
+const char *token_to_string(struct str *tok)
+{
+	switch (tok->type) {
+	case TOK_NONE: return "";
+	case TOK_NEWLINE: return "\n";
+	case TOK_SEMICOL: return ";";
+	case TOK_WORD: return tok->s;
+	case TOK_PIPE: return "|";
+	case TOK_OR: return "||";
+	case TOK_AND: return "&&";
+	case TOK_NOT: return "!";
+	case TOK_REDIR_OUT: return ">";
+	case TOK_REDIR_IN: return "<";
+	case TOK_REDIR_APPEND: return ">>";
+	case TOK_REDIR_FD: return ">&";
+	case TOK_BG: return "&";
+	case TOK_LPAREN: return "(";
+	case TOK_RPAREN: return ")";
+	case TOK_IO_NUMBER: return tok->s;
+	case TOK_ASSIGN: return tok->s;
+	default: return "))UNKNOWN TOKEN((";
+	}
 }
 
 void dump_token(struct str *tok)
