@@ -905,7 +905,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_NOT:
 		/* inverse failure and success */
 		exec_expr(e->not.expr, ctx, res);
-		res->status = FAILED(res->status) ? 0 : 1;
+		res->status = FAILED(res->status) ? W_EXITCODE(0, 0) : W_EXITCODE(1, 0);
 		break;
 	case EXPR_PIPE:
 	{
