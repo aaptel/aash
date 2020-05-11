@@ -154,7 +154,7 @@ bool is_word_all_digits(struct str *w)
 	int i;
 	char *s = w->s;
 
-	for (i = 0; i < w->size-1; i++)
+	for (i = 0; i < w->size; i++)
 		if (!isdigit(s[i]))
 			return false;
 
