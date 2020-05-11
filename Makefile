@@ -4,7 +4,8 @@ lemon: lemon.c
 	gcc -o $@ $<
 
 parser.c: parser.y lempar.c lemon
-	./lemon $<
+	rm -f parser.c parser.h
+	./lemon -p $< || test -e parser.c
 
 %.o: %.c
 	gcc -ggdb3 -Wall -o $@ -c $<
