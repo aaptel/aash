@@ -663,6 +663,7 @@ struct expand_context {
 	size_t size;
 	size_t capa;
 	int in_quote;
+	bool new_word_on_next_push;
 };
 
 const char* read_var(const char *s, char *name)
@@ -698,9 +699,10 @@ const char* read_var(const char *s, char *name)
 
 void expand_push(struct expand_context *exp, char c)
 {
-	if (exp->size == 0) {
+	if (exp->size == 0 || (exp->new_word_on_next_push && exp->words[exp->size-1]->size > 0)) {
 		struct str *w = str_new();
 		PUSH(exp, words, w);
+		exp->new_word_on_next_push = false;
 	}
 
 	str_push(exp->words[exp->size-1], c);
@@ -708,12 +710,7 @@ void expand_push(struct expand_context *exp, char c)
 
 void expand_next_word(struct expand_context *exp)
 {
-	if (exp->size > 0) {
-		if (exp->words[exp->size-1]->size > 0) {
-			struct str *w = str_new();
-			PUSH(exp, words, w);
-		}
-	}
+	exp->new_word_on_next_push = true;
 }
 
 void expand_push_var(struct exec_context *exec, struct expand_context *exp, const char *var)
