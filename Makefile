@@ -16,7 +16,7 @@ aash: aash.o parser.o
 clean:
 	rm -f lemon aash *.o parser.c parser.h parser.out
 
-test:
+test: aash
 	python3 test.py
 
 .PHONY: all clean test
