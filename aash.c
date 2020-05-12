@@ -278,6 +278,11 @@ struct str *read_word(struct input *in, struct str *tok)
 		}
 	}
  out:
+	if (strcmp(tok->s, "for")  == 0) tok->type = TOK_FOR;
+	if (strcmp(tok->s, "in")   == 0) tok->type = TOK_IN;
+	if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
+	if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
+
 	return tok;
 }
 
@@ -387,6 +392,10 @@ const char *token_to_string(struct str *tok)
 	case TOK_RPAREN: return ")";
 	case TOK_IO_NUMBER: return tok->s;
 	case TOK_ASSIGN: return tok->s;
+	case TOK_FOR: return "for";
+	case TOK_IN: return "in";
+	case TOK_DO: return "do";
+	case TOK_DONE: return "done";
 	default: return "))UNKNOWN TOKEN((";
 	}
 }
@@ -411,6 +420,10 @@ void dump_token(struct str *tok)
 	case TOK_RPAREN: puts("RPAREN )"); break;
 	case TOK_IO_NUMBER: printf("IO_NUMBER %s\n", tok->s); break;
 	case TOK_ASSIGN: puts("IO_ASSIGN"); break;
+	case TOK_FOR: puts("FOR"); break;
+	case TOK_IN: puts("IN"); break;
+	case TOK_DO: puts("DO"); break;
+	case TOK_DONE: puts("DONE"); break;
 	default: puts("???"); break;
 	}
 }
@@ -516,6 +529,14 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		dump_cmd_redirect(&e->sub.redir);
 		printf(" {\n");
 		dump_expr(e->sub.expr, n+1, graphviz);
+		IND_PRINT(n, "}\n");
+		break;
+	case EXPR_FOR:
+		IND_PRINT(n, "FOR %s IN ", e->efor.name->s);
+		for (i = 0; i < e->efor.size; i++)
+			printf("<%s> ", e->efor.words[i]->s);
+		printf("{\n");
+		dump_expr(e->efor.body, n+1, graphviz);
 		IND_PRINT(n, "}\n");
 		break;
 	default:
@@ -1180,6 +1201,24 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		rcpid = waitpid(child, &res->status, 0);
 		if (rcpid < 0)
 			E("waitpid");
+		break;
+	}
+	case EXPR_FOR:
+	{
+		struct expand_context expd = {0};
+
+		for (i = 0; i < e->efor.size; i++) {
+			L("expanding <%s>", e->efor.words[i]->s);
+			exec_expand(ctx, &expd, e->efor.words[i]);
+			expand_next_word(&expd);
+		}
+
+		for (i = 0; i < expd.size; i++) {
+			L("expanded <%s>", expd.words[i]->s);
+			exec_set_binding(ctx, e->efor.name->s, expd.words[i]->s);
+			exec_expr(e->efor.body, ctx, res);
+		}
+		// TODO free expd
 		break;
 	}
 	default:

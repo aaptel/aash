@@ -64,6 +64,7 @@ struct expr {
 		EXPR_PIPE,
 		EXPR_NOT,
 		EXPR_SUB,
+		EXPR_FOR,
 	} type;
 	bool run_in_bg;
 	union {
@@ -93,6 +94,13 @@ struct expr {
 			size_t size;
 			size_t capa;
 		} prog;
+		struct expr_for {
+			struct str *name;
+			struct str **words;
+			size_t size;
+			size_t capa;
+			struct expr *body;
+		} efor;
 	};
 };
 

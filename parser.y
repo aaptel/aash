@@ -17,6 +17,7 @@
 
 %type separator_op {struct str *}
 %type separator {struct str *}
+%type reserved_word {struct str *}
 
 %type redirect_list {struct cmd_redirect}
 %type io_file {struct stream_redirect}
@@ -24,6 +25,16 @@
 
 program(R) ::= linebreak complete_commands(E) linebreak. { R = E; *root = R;}
 program(R) ::= linebreak.                                { R = expr_new(EXPR_PROG); *root = R;}
+
+reserved_word(R) ::= IF(W). { R = W; }
+reserved_word(R) ::= THEN(W). { R = W; }
+reserved_word(R) ::= ELIF(W). { R = W; }
+reserved_word(R) ::= ELSE(W). { R = W; }
+reserved_word(R) ::= FI(W). { R = W; }
+reserved_word(R) ::= FOR(W). { R = W; }
+reserved_word(R) ::= DO(W). { R = W; }
+reserved_word(R) ::= DONE(W). { R = W; }
+reserved_word(R) ::= WHILE(W). { R = W; }
 
 complete_commands(R) ::= complete_commands(A) newline_list complete_command(E). {
 	R = A;
@@ -78,8 +89,11 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 }
 
 command(R) ::= simple_command(E). { R = E; }
-command(R) ::= subshell(E). { R = E; }
-command(R) ::= subshell(E) redirect_list(L). { R = E; R->sub.redir = L; }
+command(R) ::= compound_command(E). { R = E; }
+command(R) ::= compound_command(E) redirect_list(L). { R = E; R->sub.redir = L; }
+
+compound_command ::= subshell.
+compound_command ::= for_clause.
 
 subshell(R) ::= LPAREN compound_list(E) RPAREN. {
 	R = expr_new(EXPR_SUB);
@@ -104,8 +118,27 @@ term(R) ::= and_or(E). {
 	PUSH(&R->prog, cmds, E);
 }
 
+//for_clause ::= FOR WORD                                      do_group.
+//for_clause ::= FOR WORD                       sequential_sep do_group.
+//for_clause ::= FOR WORD linebreak IN          sequential_sep do_group.
+for_clause(R) ::= FOR WORD(N) linebreak IN wordlist(WL) sequential_sep do_group(G). {
+	R = WL;
+	R->efor.name = N;
+	R->efor.body = G;
+}
+
+wordlist(R) ::= WORD(W). { R = expr_new(EXPR_FOR); PUSH(&R->efor, words, W); }
+wordlist(R) ::= wordlist(WL) WORD(W). { R = WL; PUSH(&R->efor, words, W); }
+
+do_group(R) ::= DO compound_list(E) DONE. { R = E; }
+
 simple_command(R) ::= WORD(W). {
 	R = expr_new(EXPR_SIMPLE_CMD);
+	expr_simple_cmd_add_word(R, W);
+}
+simple_command(R) ::= simple_command(E) reserved_word(W). {
+	R = E;
+	W->type = TOK_WORD;
 	expr_simple_cmd_add_word(R, W);
 }
 simple_command(R) ::= simple_command(E) WORD(W). {
@@ -151,3 +184,6 @@ separator_op(R) ::= BG(T). { R = T; }
 
 separator(R) ::= separator_op(S) linebreak. { R = S; }
 separator(R) ::= newline_list. { R = NULL; }
+
+sequential_sep ::= SEMICOL linebreak.
+sequential_sep ::= newline_list.
