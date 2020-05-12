@@ -89,12 +89,15 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 	R->pipe.right = C;
 }
 
+brace_group(R) ::= LBRACE compound_list(E) RBRACE. { R = E; }
+
 command(R) ::= simple_command(E). { R = E; }
 command(R) ::= compound_command(E). { R = E; }
 command(R) ::= compound_command(E) redirect_list(L). { R = E; R->sub.redir = L; }
 
 compound_command ::= subshell.
 compound_command ::= for_clause.
+compound_command ::= brace_group.
 
 subshell(R) ::= LPAREN compound_list(E) RPAREN. {
 	R = expr_new(EXPR_SUB);

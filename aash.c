@@ -313,6 +313,12 @@ struct str *read_token(struct input *in)
 		case EOF:
 			tok->type = TOK_NONE;
 			goto out;
+		case '{':
+			tok->type = TOK_LBRACE;
+			goto out;
+		case '}':
+			tok->type = TOK_RBRACE;
+			goto out;
 		case '#':
 			read_comment(in);
 			break;
@@ -390,6 +396,8 @@ const char *token_to_string(struct str *tok)
 	case TOK_BG: return "&";
 	case TOK_LPAREN: return "(";
 	case TOK_RPAREN: return ")";
+	case TOK_LBRACE: return "{";
+	case TOK_RBRACE: return "}";
 	case TOK_IO_NUMBER: return tok->s;
 	case TOK_ASSIGN: return tok->s;
 	case TOK_FOR: return "for";
@@ -418,6 +426,8 @@ void dump_token(struct str *tok)
 	case TOK_BG: puts("BG &"); break;
 	case TOK_LPAREN: puts("LPAREN ("); break;
 	case TOK_RPAREN: puts("RPAREN )"); break;
+	case TOK_LBRACE: puts("LBRACE {"); break;
+	case TOK_RBRACE: puts("RBRACE }"); break;
 	case TOK_IO_NUMBER: printf("IO_NUMBER %s\n", tok->s); break;
 	case TOK_ASSIGN: puts("IO_ASSIGN"); break;
 	case TOK_FOR: puts("FOR"); break;

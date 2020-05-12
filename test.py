@@ -189,6 +189,17 @@ def test_for_loop():
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
+def test_braces():
+    err = 0
+    # POSIX requires a ";" here but aash doesn't :)
+    err += run_script('{ echo a }', 'a\n', '', 0)
+    err += run_script('{ echo a; }', 'a\n', '', 0)
+    err += run_script('{ { echo a; } }', 'a\n', '', 0)
+    err += run_script('{ { echo a; } ; { echo b; } }', 'a\nb\n', '', 0)
+    err += run_script('{ { echo a; } ; { echo b; } }', 'a\nb\n', '', 0)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
+
 def run_script(script, exp_out, exp_err, exp_rc):
     r = run(script)
     rposix = run_posix(script)
