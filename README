@@ -17,10 +17,13 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - builtin (only 'wait' for now)
   - variable assignement and reference (var=foo ; echo "$var" ${var} '$var' )
   - subshell expansion $(foo $(bar) )
+  - for loops ( for i in $(seq 4); do echo $i; done )
+  - functions ( function func() { echo foo; } ; func )
 
 * unsupported stuff so far:
   - no interactive mode
-  - no compounded commands (if,for,while,until,case,...)
+  - not all compounded commands (if,while,until,case,...)
+  - no special variables ($0 $1 $@ ...)
   - ...
 
 build
