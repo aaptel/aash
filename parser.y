@@ -27,6 +27,7 @@ program(R) ::= linebreak complete_commands(E) linebreak. { R = E; *root = R;}
 program(R) ::= linebreak.                                { R = expr_new(EXPR_PROG); *root = R;}
 
 reserved_word(R) ::= IF(W). { R = W; }
+reserved_word(R) ::= IN(W). { R = W; }
 reserved_word(R) ::= THEN(W). { R = W; }
 reserved_word(R) ::= ELIF(W). { R = W; }
 reserved_word(R) ::= ELSE(W). { R = W; }
