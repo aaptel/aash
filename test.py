@@ -263,11 +263,11 @@ def run(script):
     try:
         r = sp.run(PROG, input=script, timeout=TIMEOUT, encoding='utf-8', capture_output=True)
     except sp.TimeoutExpired as e:
-        raise TimeoutError("process took over %ds"%TIMEOUT) from e
+        raise TimeoutError("process took over %ds"%TIMEOUT, script) from e
     if r.returncode < 0:
-        raise SignalError('signaled %d'%(-r.returncode), r)
+        raise SignalError('signaled %d'%(-r.returncode), script, r)
     if r.returncode > 0:
-        raise ExitError('exit failure %d'%(r.returncode), r)
+        raise ExitError('exit failure %d'%(r.returncode), script, r)
     if 'syntax error' in r.stdout or 'syntax error' in r.stderr:
         raise ParseError('parse error', script, r)
     return Result(script, r)
@@ -303,9 +303,12 @@ class TestException(Exception):
     def __init__(self, message):
         super().__init__(message)
 class SignalError(TestException):
-    def __init__(self, message, result):
+    def __init__(self, message, script, result):
         super().__init__(message)
+        self.script = script
         self.result = result
+    def __str__(self):
+        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
 class ParseError(TestException):
     def __init__(self, message, script, result):
         super().__init__(message)
@@ -314,19 +317,27 @@ class ParseError(TestException):
     def __str__(self):
         return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
 class OutputError(TestException):
-    def __init__(self, message, result):
+    def __init__(self, message, script, result):
         super().__init__(message)
         self.result = result
+    def __str__(self):
+        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
 class ExitError(TestException):
-    def __init__(self, message, result):
+    def __init__(self, message, script, result):
         super().__init__(message)
+        self.script = script
         self.result = result
+    def __str__(self):
+        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
 class MismatchError(TestException):
     def __init__(self, message):
         super().__init__(message)
 class TimeoutError(TestException):
-    def __init__(self, message):
+    def __init__(self, message, script):
         super().__init__(message)
+        self.script = script
+    def __str__(self):
+        return "%s: %s\n%s"%(super().__str__(),self.script)
 
 # class Unbuffered(object):
 #    def __init__(self, stream):
