@@ -14,8 +14,10 @@ def main():
     ap = argparse.ArgumentParser(description="aash tester script")
     ap.add_argument("-v", "--verbose", action="count", default=0, help="show detailed output")
     ap.add_argument("-s", "--stop", action="store_true", help="stop on failure and show detailed output")
+    ap.add_argument("-p", "--posix", default='sh', help="POSIX shell to use to compare outputs (sh, dash, ...)")
     ap.add_argument("-f", "--filter",  help="filter test names")
     ap.add_argument("-l", "--list", action="store_true", help="list tests")
+
     global OPTS
     OPTS = ap.parse_args()
 
@@ -229,7 +231,7 @@ def run(script):
     return Result(script, r)
 
 def run_posix(script):
-    rr = sp.run('dash', input=script, timeout=6, encoding='utf-8', capture_output=True)
+    rr = sp.run(OPTS.posix, input=script, timeout=TIMEOUT, encoding='utf-8', capture_output=True)
     return rr
 
 class Result:
