@@ -206,6 +206,15 @@ def test_functions():
     err += run_script('function foo() { echo a; }', '', '', 0)
     err += run_script('function foo() { echo a; } ; foo', 'a\n', '', 0)
     err += run_script('function foo() { echo $1; } ; foo a', 'a\n', '', 0)
+    err += run_script('function foo() { echo $1; } ; foo "a b"', 'a b\n', '', 0)
+    err += run_script('bar="a b"; function foo() { echo $1; } ; foo $bar', 'a\n', '', 0)
+    err += run_script('function func1() { echo $1; func2; echo $1;} ; function func2() { echo $1; } ; func1 a',
+                      'a\n\na\n', '', 0)
+    err += run_script('function func1() { echo $1; func2 x; echo $1;} ; function func2() { echo $1; } ; func1 a',
+                      'a\nx\na\n', '', 0)
+    err += run_script('function func1() { echo $1 $2; func2; echo $1 $2;} ; function func2() { echo $1 $2; } ; func1 a b',
+                      'a b\n\na b\n', '', 0)
+
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
