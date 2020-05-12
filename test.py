@@ -109,6 +109,26 @@ def test_arg_expansion():
     err += run_arg_expansion(r''' 'a\ b c' ''', ['a b c'])
     err += run_arg_expansion(r''' a\ b ''', ['a b'])
     err += run_arg_expansion(r''' a" bc "\ d'ef ' ''', ['a bc  def '])
+    err += run_arg_expansion(r"     ''      ", [''])
+    err += run_arg_expansion(r"     '' ''   ", ['', ''])
+    err += run_arg_expansion(r"     $undef       ", [])
+    err += run_arg_expansion(r"     ''$undef     ", [''])
+    err += run_arg_expansion(r"     ''$undef''   ", [''])
+    err += run_arg_expansion(r"     ''''    ", [''])
+    err += run_arg_expansion(r'     ""      ', [''])
+    err += run_arg_expansion(r'     "" ""   ', ['', ''])
+    err += run_arg_expansion(r'     """"    ', [''])
+
+    err += run_arg_expansion(r"     ''      x", ['', 'x'])
+    err += run_arg_expansion(r"     '' ''   x", ['', '', 'x'])
+    err += run_arg_expansion(r"     $undef     x  ", ['x'])
+    err += run_arg_expansion(r"     ''$undef   x  ", ['', 'x'])
+    err += run_arg_expansion(r"     ''$undef'' x  ", ['', 'x'])
+    err += run_arg_expansion(r"     ''''    x", ['', 'x'])
+    err += run_arg_expansion(r'     ""      x', ['', 'x'])
+    err += run_arg_expansion(r'     "" ""   x', ['', '', 'x'])
+    err += run_arg_expansion(r'     """"    x', ['', 'x'])
+
 
     var = "var=foo;"
     err += run_arg_expansion(r''' $var ''', ['foo'], pre=var)
@@ -122,6 +142,20 @@ def test_arg_expansion():
     err += run_arg_expansion(r''' ${var} ''', ['foo', 'bar'], pre=var)
     err += run_arg_expansion(r''' "${var}" ''', ['foo  bar'], pre=var)
     err += run_arg_expansion(r''' " ${var} " ''', [' foo  bar '], pre=var)
+    err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
+    err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
+    var = "var=;"
+    err += run_arg_expansion(r''' $var ''', [], pre=var)
+    err += run_arg_expansion(r''' ${var} ''', [], pre=var)
+    err += run_arg_expansion(r''' "${var}" ''', [''], pre=var)
+    err += run_arg_expansion(r''' " ${var} " ''', ['  '], pre=var)
+    err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
+    err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
+    var = ""
+    err += run_arg_expansion(r''' $var ''', [], pre=var)
+    err += run_arg_expansion(r''' ${var} ''', [], pre=var)
+    err += run_arg_expansion(r''' "${var}" ''', [''], pre=var)
+    err += run_arg_expansion(r''' " ${var} " ''', ['  '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
     if err > 0:

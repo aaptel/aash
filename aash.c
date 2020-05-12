@@ -689,6 +689,11 @@ void exec_set_var_binding(struct exec_context *exec, const char *name, const cha
 		return;
 	}
 
+	if (!val || !*val) {
+		L("null val for var <%s>", name);
+		return;
+	}
+
 	L("name=<%s> val=<%s>", name, val);
 
 	v = exec_get_var_binding(exec, name);
@@ -813,6 +818,7 @@ struct expand_context {
 	struct str **words;
 	size_t size;
 	size_t capa;
+	size_t total_added;
 	int in_quote;
 	bool new_word_on_next_push;
 };
@@ -850,18 +856,23 @@ const char* read_var(const char *s, char *name)
 
 void expand_push(struct expand_context *exp, char c)
 {
-	if (exp->size == 0 || (exp->new_word_on_next_push && exp->words[exp->size-1]->size > 0)) {
-		struct str *w = str_new();
-		PUSH(exp, words, w);
+	if (exp->size == 0 || exp->new_word_on_next_push) {
+		PUSH(exp, words, str_new());
 		exp->new_word_on_next_push = false;
 	}
 
 	str_push(exp->words[exp->size-1], c);
+	exp->total_added++;
 }
 
 void expand_next_word(struct expand_context *exp)
 {
-	exp->new_word_on_next_push = true;
+	if (exp->new_word_on_next_push) {
+		PUSH(exp, words, str_new());
+		exp->new_word_on_next_push = false;
+	} else {
+		exp->new_word_on_next_push = true;
+	}
 }
 
 void expand_push_var(struct exec_context *exec, struct expand_context *exp, const char *var)
@@ -1008,12 +1019,17 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 void exec_expand(struct exec_context *exec, struct expand_context *exp, struct str *in)
 {
 	const char *s = in->s;
+	bool contained_quotes = false;
+	size_t added_at_start = exp->total_added;
+
 	exp->in_quote = 0;
 
 	for (s = in->s; *s; s++) {
 		char c = *s, c2 = *(s+1);
 
 		if (exp->in_quote) {
+			contained_quotes = true;
+
 			if (c == exp->in_quote) {
 				exp->in_quote = 0;
 				continue;
@@ -1072,6 +1088,8 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 		}
 	}
  out:
+	if (contained_quotes && exp->total_added - added_at_start == 0)
+		expand_next_word(exp);
 	return;
 }
 
@@ -1177,15 +1195,17 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 	for (i = 0; i < expr->simple_cmd.size; i++) {
 		struct str *w = expr->simple_cmd.words[i];
 		// discard assignements
-		if (w->type == TOK_WORD) {
-			exec_expand(exec, &expd, w);
+		assert(w->type == TOK_WORD);
+		exec_expand(exec, &expd, w);
+		if (i < expr->simple_cmd.size-1)
 			expand_next_word(&expd);
-		}
 	}
 
 	char **argv = calloc(sizeof(*argv), expd.size+1);
 	for (i = 0; i < expd.size; i++) {
 		argv[i] = expd.words[i]->s;
+		if (!argv[i])
+			argv[i] = "";
 	}
 	exec_apply_redir(&expr->simple_cmd.redir);
 	execvp(argv[0], argv);
