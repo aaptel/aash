@@ -65,6 +65,7 @@ struct expr {
 		EXPR_NOT,
 		EXPR_SUB,
 		EXPR_FOR,
+		EXPR_FUNCTION,
 	} type;
 	bool run_in_bg;
 	union {
@@ -101,6 +102,10 @@ struct expr {
 			size_t capa;
 			struct expr *body;
 		} efor;
+		struct expr_func {
+			struct str *name;
+			struct expr *body;
+		} func;
 	};
 };
 

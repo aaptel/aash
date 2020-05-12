@@ -282,6 +282,7 @@ struct str *read_word(struct input *in, struct str *tok)
 	if (strcmp(tok->s, "in")   == 0) tok->type = TOK_IN;
 	if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
 	if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
+	if (strcmp(tok->s, "function") == 0) tok->type = TOK_FUNCTION;
 
 	return tok;
 }
@@ -404,6 +405,7 @@ const char *token_to_string(struct str *tok)
 	case TOK_IN: return "in";
 	case TOK_DO: return "do";
 	case TOK_DONE: return "done";
+	case TOK_FUNCTION: return "function";
 	default: return "))UNKNOWN TOKEN((";
 	}
 }
@@ -434,6 +436,7 @@ void dump_token(struct str *tok)
 	case TOK_IN: puts("IN"); break;
 	case TOK_DO: puts("DO"); break;
 	case TOK_DONE: puts("DONE"); break;
+	case TOK_FUNCTION: puts("FUNCTION"); break;
 	default: puts("???"); break;
 	}
 }
@@ -549,6 +552,11 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		dump_expr(e->efor.body, n+1, graphviz);
 		IND_PRINT(n, "}\n");
 		break;
+	case EXPR_FUNCTION:
+		IND_PRINT(n, "FUNCTION %s {", e->func.name->s);
+		dump_expr(e->func.body, n+1, graphviz);
+		IND_PRINT(n, "}\n");
+		break;
 	default:
 		IND_PRINT(n, "UNKNOWN TYPE %d\n", e->type);
 		break;
@@ -611,23 +619,32 @@ struct exec_context {
 	size_t capa;
 
 	struct vars {
-		struct binding {
+		struct var_binding {
 			char *name;
 			char *value;
 		} *bindings;
 		size_t size;
 		size_t capa;
 	} vars;
+
+	struct funcs {
+		struct func_binding {
+			char *name;
+			struct expr *func;
+		} *bindings;
+		size_t size;
+		size_t capa;
+	} funcs;
 };
 
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res);
 
-void exec_set_binding(struct exec_context *exec, const char *name, const char *val)
+void exec_set_var_binding(struct exec_context *exec, const char *name, const char *val)
 {
 	int i;
 
 	for (i = 0; i < exec->vars.size; i++) {
-		struct binding *v = &exec->vars.bindings[i];
+		struct var_binding *v = &exec->vars.bindings[i];
 		if (strcmp(name, v->name) == 0) {
 			free(v->value);
 			v->value = strdup(val);
@@ -635,12 +652,44 @@ void exec_set_binding(struct exec_context *exec, const char *name, const char *v
 		}
 	}
 
-	struct binding newv = {
+	struct var_binding newv = {
 		.name = strdup(name),
 		.value = strdup(val),
 	};
 
 	PUSH(&exec->vars, bindings, newv);
+}
+
+void exec_set_func_binding(struct exec_context *exec, const char *name, struct expr *func)
+{
+	int i;
+
+	for (i = 0; i < exec->funcs.size; i++) {
+		struct func_binding *v = &exec->funcs.bindings[i];
+		if (strcmp(name, v->name) == 0) {
+			// TODO free/duplicate expr
+			v->func = func;
+			return;
+		}
+	}
+
+	struct func_binding newv = {
+		.name = strdup(name),
+		.func = func, // TODO duplicate expr?
+	};
+
+	PUSH(&exec->funcs, bindings, newv);
+}
+
+struct expr *exec_find_func(struct exec_context *exec, const char *name)
+{
+	int i;
+	for (i = 0; i < exec->funcs.size; i++) {
+		struct func_binding *v = &exec->funcs.bindings[i];
+		if (strcmp(name, v->name) == 0)
+			return v->func;
+	}
+	return NULL;
 }
 
 /*
@@ -748,7 +797,7 @@ void expand_push_var(struct exec_context *exec, struct expand_context *exp, cons
 {
 	int i;
 	for (i = 0; i < exec->vars.size; i++) {
-		struct binding *v = &exec->vars.bindings[i];
+		struct var_binding *v = &exec->vars.bindings[i];
 		if (strcmp(var, v->name) == 0) {
 			const char *s = v->value;
 			for (; *s; s++) {
@@ -1040,7 +1089,7 @@ void exec_assign(struct exec_context *exec, struct str *w)
 	}
 
 	/* store var */
-	exec_set_binding(exec, name, expanded->s);
+	exec_set_var_binding(exec, name, expanded->s);
 
 	/* done */
 	str_free(expanded);
@@ -1079,7 +1128,8 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	int i;
 	pid_t rcpid, bg_pid;
 	int rc;
-	builtin_func_t func;
+	builtin_func_t builtin;
+	struct expr *func;
 
 	assert(e);
 
@@ -1108,9 +1158,16 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			goto out;
 		}
 		/* check builtins */
-		func = builtin_find(e->simple_cmd.words[0]->s);
+		builtin = builtin_find(e->simple_cmd.words[0]->s);
+		if (builtin) {
+			builtin(&e->simple_cmd, ctx, res);
+			goto out;
+		}
+		/* check for function calls */
+		func = exec_find_func(ctx, e->simple_cmd.words[0]->s);
 		if (func) {
-			func(&e->simple_cmd, ctx, res);
+			// TODO positional arg binding
+			exec_expr(func->func.body, ctx, res);
 			goto out;
 		}
 		/* otherwise fork & exec */
@@ -1225,12 +1282,16 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 		for (i = 0; i < expd.size; i++) {
 			L("expanded <%s>", expd.words[i]->s);
-			exec_set_binding(ctx, e->efor.name->s, expd.words[i]->s);
+			exec_set_var_binding(ctx, e->efor.name->s, expd.words[i]->s);
 			exec_expr(e->efor.body, ctx, res);
 		}
 		// TODO free expd
 		break;
 	}
+	case EXPR_FUNCTION:
+		exec_set_func_binding(ctx, e->func.name->s, e);
+		res->status = 0;
+		break;
 	default:
 		E("TODO");
 	}

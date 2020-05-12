@@ -36,6 +36,7 @@ reserved_word(R) ::= FOR(W). { R = W; }
 reserved_word(R) ::= DO(W). { R = W; }
 reserved_word(R) ::= DONE(W). { R = W; }
 reserved_word(R) ::= WHILE(W). { R = W; }
+reserved_word(R) ::= FUNCTION(W). { R = W; }
 
 complete_commands(R) ::= complete_commands(A) newline_list complete_command(E). {
 	R = A;
@@ -89,11 +90,20 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 	R->pipe.right = C;
 }
 
+function_definition(R) ::= FUNCTION WORD(N) LPAREN RPAREN linebreak function_body(E). {
+	R = expr_new(EXPR_FUNCTION);
+	R->func.name = N;
+	R->func.body = E;
+}
+function_body(R) ::= compound_command(E). { R = E; }
+//function_body ::= compound_command redirect_list.
+
 brace_group(R) ::= LBRACE compound_list(E) RBRACE. { R = E; }
 
 command(R) ::= simple_command(E). { R = E; }
 command(R) ::= compound_command(E). { R = E; }
 command(R) ::= compound_command(E) redirect_list(L). { R = E; R->sub.redir = L; }
+command(R) ::= function_definition(E). { R = E; }
 
 compound_command ::= subshell.
 compound_command ::= for_clause.

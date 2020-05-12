@@ -172,7 +172,7 @@ def test_vars():
 
 def test_reserved_words():
     err = 0
-    reserved = 'for in do done while until if fi then else elif case esac'.split()
+    reserved = 'for in do done while until if fi then else elif case esac function'.split()
     for w in reserved:
         err += run_script('echo %s'%w, '%s\n'%w, '', 0)
         err += run_script('%s=foo; echo $%s'%(w,w), 'foo\n', '', 0)
@@ -199,6 +199,16 @@ def test_braces():
     err += run_script('{ { echo a; } ; { echo b; } }', 'a\nb\n', '', 0)
     if err > 0:
         raise MismatchError("%d mismatches"%err)
+
+def test_functions():
+    err = 0
+
+    err += run_script('function foo() { echo a; }', '', '', 0)
+    err += run_script('function foo() { echo a; } ; foo', 'a\n', '', 0)
+    err += run_script('function foo() { echo $1; } ; foo a', 'a\n', '', 0)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
+
 
 def run_script(script, exp_out, exp_err, exp_rc):
     r = run(script)
