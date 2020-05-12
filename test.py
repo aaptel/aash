@@ -170,6 +170,25 @@ def test_vars():
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
+def test_reserved_words():
+    err = 0
+    reserved = 'for in do done while until if fi then else elif case esac'.split()
+    for w in reserved:
+        err += run_script('echo %s'%w, '%s\n'%w, '', 0)
+        err += run_script('%s=foo; echo $%s'%(w,w), 'foo\n', '', 0)
+        err += run_script('%s=%s; echo $%s'%(w,w,w), '%s\n'%w, '', 0)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
+
+def test_for_loop():
+    err = 0
+    err += run_script('for i in a b c; do echo $i; done', 'a\nb\nc\n', '', 0)
+    err += run_script('for i in a "b c"; do echo $i; done', 'a\nb c\n', '', 0)
+    err += run_script('for i in a "b c"; do echo $i; echo x$i; done', 'a\nxa\nb c\nxb c\n', '', 0)
+    err += run_script('v=foo; for i in a "$v c"; do echo $v$i; done', 'fooa\nfoofoo c\n', '', 0)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
+
 def run_script(script, exp_out, exp_err, exp_rc):
     r = run(script)
     rposix = run_posix(script)
