@@ -639,13 +639,45 @@ struct exec_context {
 
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res);
 
-void exec_set_var_binding(struct exec_context *exec, const char *name, const char *val)
+struct var_binding *exec_get_var_binding(struct exec_context *exec, const char *name)
 {
 	int i;
+	struct var_binding *v;
 
-	for (i = 0; i < exec->vars.size; i++) {
-		struct var_binding *v = &exec->vars.bindings[i];
-		if (strcmp(name, v->name) == 0) {
+	if (!name || !*name) {
+		L("trying to get null var");
+	}
+
+	/*
+	 * To get scoping right, look from last to first
+	 */
+	for (i = exec->vars.size-1; i >= 0; i--) {
+		v = &exec->vars.bindings[i];
+		if (v->name && strcmp(name, v->name) == 0)
+			return v;
+	}
+	return NULL;
+}
+
+void exec_set_var_binding(struct exec_context *exec, bool new_scope, const char *name, const char *val)
+{
+	struct var_binding *v;
+
+	if (!name || !*name) {
+		L("trying to set null var");
+		return;
+	}
+
+	L("new_scope=%d name=<%s> val=<%s>", new_scope, name, val);
+
+	/*
+	 * Handle new scope by pushing duplicate at the end. Since we
+	 * look them up from end to start it will show up first.
+	 */
+
+	if (!new_scope) {
+		v = exec_get_var_binding(exec, name);
+		if (v) {
 			free(v->value);
 			v->value = strdup(val);
 			return;
@@ -658,6 +690,21 @@ void exec_set_var_binding(struct exec_context *exec, const char *name, const cha
 	};
 
 	PUSH(&exec->vars, bindings, newv);
+}
+
+void exec_pop_var_binding(struct exec_context *exec, const char *name)
+{
+	struct var_binding *v;
+
+	L("name=<%s>", name);
+
+	v = exec_get_var_binding(exec, name);
+	if (!v)
+		return;
+
+	free(v->name);
+	free(v->value);
+	v->name = v->value = NULL;
 }
 
 void exec_set_func_binding(struct exec_context *exec, const char *name, struct expr *func)
@@ -795,21 +842,19 @@ void expand_next_word(struct expand_context *exp)
 
 void expand_push_var(struct exec_context *exec, struct expand_context *exp, const char *var)
 {
-	int i;
-	for (i = 0; i < exec->vars.size; i++) {
-		struct var_binding *v = &exec->vars.bindings[i];
-		if (strcmp(var, v->name) == 0) {
-			const char *s = v->value;
-			for (; *s; s++) {
-				if (exp->in_quote)
-					expand_push(exp, *s);
-				else {
-					if (strchr(" \n\t", *s))
-						expand_next_word(exp);
-					else
-						expand_push(exp, *s);
-				}
-			}
+	const char *s;
+	struct var_binding *v = exec_get_var_binding(exec, var);
+	if (!v)
+		return;
+
+	for (s = v->value; s && *s; s++) {
+		if (exp->in_quote)
+			expand_push(exp, *s);
+		else {
+			if (strchr(" \n\t", *s))
+				expand_next_word(exp);
+			else
+				expand_push(exp, *s);
 		}
 	}
 }
@@ -1089,7 +1134,7 @@ void exec_assign(struct exec_context *exec, struct str *w)
 	}
 
 	/* store var */
-	exec_set_var_binding(exec, name, expanded->s);
+	exec_set_var_binding(exec, false, name, expanded->s);
 
 	/* done */
 	str_free(expanded);
@@ -1121,6 +1166,55 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 	exec_apply_redir(&expr->simple_cmd.redir);
 	execvp(argv[0], argv);
 	exit(1);
+}
+
+void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e, struct exec_result *res)
+{
+	struct expr_simple_cmd *cmd = &e->simple_cmd;
+	char name[MAX_VAR_NAME_SIZE] = {0};
+	struct expand_context expd = {0};
+	int i;
+	int rc;
+
+	/*
+	 * Expand all arguments
+	 */
+	for (i = 1; i < cmd->size; i++) {
+		struct str *w = cmd->words[i];
+		// discard assignements
+		if (w->type == TOK_WORD) {
+			exec_expand(exec, &expd, w);
+			expand_next_word(&expd);
+		}
+	}
+
+	/*
+	 * Push new var bindings for position arguments
+	 */
+	for (i = 0; i < expd.size; i++) {
+		rc = snprintf(name, MAX_VAR_NAME_SIZE, "%d", i+1);
+		if (rc > MAX_VAR_NAME_SIZE) {
+			name[MAX_VAR_NAME_SIZE-1] = 0;
+			L("truncated var name %d => <%s>", i+1, name);
+		}
+		exec_set_var_binding(exec, true, name, expd.words[i]->s);
+	}
+
+	exec_expr(func->func.body, exec, res);
+
+	/*
+	 * Pop positional arguments
+	 */
+	for (i = 0; i < expd.size; i++) {
+		rc = snprintf(name, MAX_VAR_NAME_SIZE, "%d", i+1);
+		if (rc > MAX_VAR_NAME_SIZE) {
+			name[MAX_VAR_NAME_SIZE-1] = 0;
+			L("truncated var name %d => <%s>", i+1, name);
+		}
+		exec_pop_var_binding(exec, name);
+	}
+
+	// TODO free expand
 }
 
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
@@ -1166,8 +1260,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		/* check for function calls */
 		func = exec_find_func(ctx, e->simple_cmd.words[0]->s);
 		if (func) {
-			// TODO positional arg binding
-			exec_expr(func->func.body, ctx, res);
+			exec_func_call(ctx, func, e, res);
 			goto out;
 		}
 		/* otherwise fork & exec */
@@ -1282,7 +1375,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 		for (i = 0; i < expd.size; i++) {
 			L("expanded <%s>", expd.words[i]->s);
-			exec_set_var_binding(ctx, e->efor.name->s, expd.words[i]->s);
+			exec_set_var_binding(ctx, false, e->efor.name->s, expd.words[i]->s);
 			exec_expr(e->efor.body, ctx, res);
 		}
 		// TODO free expd
