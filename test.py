@@ -230,14 +230,14 @@ def run_script(script, exp_out, exp_err, exp_rc):
     pox = (rposix.stdout, rposix.stderr, rposix.returncode)
     exp = (exp_out, exp_err, exp_rc)
 
+    if pox != exp:
+        warn("%-40s POSIX %s EXPECTED %s"%(script, pox, exp))
     if out != exp:
         err("%-40s GOT %s EXPECTED %s"%(script, out, exp))
         if OPTS.stop:
             print('  ', '-'*70, '\n', r, sep='', end='')
             exit(1)
         return 1
-    if pox != exp:
-        warn("%-40s POSIX %s EXPECTED %s"%(script, pox, exp))
     if OPTS.verbose >= 1 and out == exp:
         ok("%-40s => %s"%(script, out))
     return 0
