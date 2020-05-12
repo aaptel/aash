@@ -124,6 +124,8 @@ def test_arg_expansion():
     err += run_arg_expansion(r''' " ${var} " ''', [' foo  bar '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
 
 def test_subshell_expand():
     err = 0
