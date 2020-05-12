@@ -149,17 +149,19 @@ void read_comment(struct input *in) {
 	}
 }
 
-bool is_word_all_digits(struct str *w)
+bool is_all_digits(const char *s)
 {
-	int i;
-	char *s = w->s;
-
-	for (i = 0; i < w->size; i++)
-		if (!isdigit(s[i]))
+	for (; s && *s; s++)
+		if (!isdigit(*s))
 			return false;
 
 	return true;
 }
+bool is_word_all_digits(struct str *w)
+{
+	return is_all_digits(w->s);
+}
+
 
 const char *token_to_string(struct str *);
 struct str *read_token(struct input *in);
