@@ -5,8 +5,6 @@
 enum token_type {
 	TOK_NONE = 0,
 #include "parser.h"
-	/* TODO: handle those in parser */
-	TOK_ASSIGN       = 100,
 };
 
 /* Use to store tokens */
@@ -59,8 +57,10 @@ struct cmd_redirect {
 	} stdin, stdout, stderr;
 };
 
+struct expr_simple_cmd;
 void stream_redirect_init(struct stream_redirect *sr, struct str *mode, struct str *file);
 void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s);
+void simple_cmd_merge(struct expr_simple_cmd *c, struct expr_simple_cmd *other);
 
 struct expr {
 	enum expr_type {

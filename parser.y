@@ -26,18 +26,6 @@
 program(R) ::= linebreak complete_commands(E) linebreak. { R = E; *root = R;}
 program(R) ::= linebreak.                                { R = expr_new(EXPR_PROG); *root = R;}
 
-reserved_word(R) ::= IF(W). { R = W; }
-reserved_word(R) ::= IN(W). { R = W; }
-reserved_word(R) ::= THEN(W). { R = W; }
-reserved_word(R) ::= ELIF(W). { R = W; }
-reserved_word(R) ::= ELSE(W). { R = W; }
-reserved_word(R) ::= FI(W). { R = W; }
-reserved_word(R) ::= FOR(W). { R = W; }
-reserved_word(R) ::= DO(W). { R = W; }
-reserved_word(R) ::= DONE(W). { R = W; }
-reserved_word(R) ::= WHILE(W). { R = W; }
-reserved_word(R) ::= FUNCTION(W). { R = W; }
-
 complete_commands(R) ::= complete_commands(A) newline_list complete_command(E). {
 	R = A;
 	PUSH(&R->prog, cmds, E);
@@ -135,7 +123,7 @@ term(R) ::= and_or(E). {
 //for_clause ::= FOR WORD                                      do_group.
 //for_clause ::= FOR WORD                       sequential_sep do_group.
 //for_clause ::= FOR WORD linebreak IN          sequential_sep do_group.
-for_clause(R) ::= FOR WORD(N) linebreak IN wordlist(WL) sequential_sep do_group(G). {
+for_clause(R) ::= FOR NAME(N) linebreak IN wordlist(WL) sequential_sep do_group(G). {
 	R = WL;
 	R->efor.name = N;
 	R->efor.body = G;
@@ -152,22 +140,60 @@ wordlist(R) ::= wordlist(WL) WORD(W). {
 
 do_group(R) ::= DO compound_list(E) DONE. { R = E; }
 
+simple_command(R) ::= cmd_prefix(A) WORD(W) cmd_suffix(B). {
+	R = A;
+	PUSH(&R->simple_cmd, words, W);
+	simple_cmd_merge(&R->simple_cmd, &B->simple_cmd);
+	expr_free(B);
+}
+simple_command(R) ::= cmd_prefix(A) WORD(W). {
+	R = A;
+	PUSH(&R->simple_cmd, words, W);
+}
+simple_command(R) ::= cmd_prefix(A). { R = A; }
+simple_command(R) ::= WORD(W) cmd_suffix(E). {
+	R = expr_new(EXPR_SIMPLE_CMD);
+	PUSH(&R->simple_cmd, words, W);
+	simple_cmd_merge(&R->simple_cmd, &E->simple_cmd);
+	expr_free(E);
+}
 simple_command(R) ::= WORD(W). {
 	R = expr_new(EXPR_SIMPLE_CMD);
-	expr_simple_cmd_add_word(R, W);
+	PUSH(&R->simple_cmd, words, W);
 }
-simple_command(R) ::= simple_command(E) reserved_word(W). {
+
+cmd_prefix(R) ::=               io_redirect(REDIR). {
+	R = expr_new(EXPR_SIMPLE_CMD);
+	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+}
+cmd_prefix(R) ::= cmd_prefix(E) io_redirect(REDIR). {
 	R = E;
-	W->type = TOK_WORD;
-	expr_simple_cmd_add_word(R, W);
+	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
 }
-simple_command(R) ::= simple_command(E) WORD(W). {
+cmd_prefix(R) ::=               ASSIGN(W). {
+	R = expr_new(EXPR_SIMPLE_CMD);
+	PUSH(&R->simple_cmd, words, W);
+}
+cmd_prefix(R) ::= cmd_prefix(E) ASSIGN(W). {
 	R = E;
-	expr_simple_cmd_add_word(R, W);
+	PUSH(&R->simple_cmd, words, W);
 }
-simple_command(R) ::= simple_command(A) io_redirect(B). {
-	R = A;
-	cmd_redirect_merge(&R->simple_cmd.redir, &B);
+
+cmd_suffix(R) ::=               io_redirect(REDIR). {
+	R = expr_new(EXPR_SIMPLE_CMD);
+	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+}
+cmd_suffix(R) ::= cmd_suffix(E) io_redirect(REDIR). {
+	R = E;
+	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+}
+cmd_suffix(R) ::=               WORD(W). {
+	R = expr_new(EXPR_SIMPLE_CMD);
+	PUSH(&R->simple_cmd, words, W);
+}
+cmd_suffix(R) ::= cmd_suffix(E) WORD(W). {
+	R = E;
+	PUSH(&R->simple_cmd, words, W);
 }
 
 redirect_list(R) ::= io_redirect(A). {

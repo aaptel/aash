@@ -166,16 +166,60 @@ bool is_word_all_digits(struct str *w)
 
 
 const char *token_to_string(struct str *);
-struct str *read_token(struct input *in);
+struct str *read_token_raw(struct input *in);
+struct str *read_token(struct input *in, enum token_type *last_tok)
+{
+	struct str *tok = read_token_raw(in);
+
+	if (tok->type != TOK_WORD)
+		goto out;
+
+	/*
+	 * Current token is a word but is it special?
+	 */
+	switch (*last_tok) {
+	case TOK_WORD:
+		/* if last token was a non-special word, remaining words are normal */
+		break;
+	case TOK_FOR:
+		/* "for" expects a variable name */
+		tok->type = TOK_NAME;
+		break;
+	case TOK_NAME:
+		/* "for" NAME "in": we expect a IN word here */
+		if (strcmp(tok->s, "in") == 0)
+			tok->type = TOK_IN;
+		break;
+	case TOK_ASSIGN:
+		/* a sequence of assign can occur in "a=1 b=2 cmd arg..." */
+		if (strchr(tok->s, '='))
+			tok->type = TOK_ASSIGN;
+	default:
+		/* otherwise we are starting a command, look for special word */
+		if      (strcmp(tok->s, "for")  == 0) tok->type = TOK_FOR;
+		else if (strcmp(tok->s, "in")   == 0) tok->type = TOK_IN;
+		else if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
+		else if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
+		else if (strcmp(tok->s, "function") == 0) tok->type = TOK_FUNCTION;
+
+		/* first word with '=' is an assign */
+		else if (strchr(tok->s, '=')) tok->type = TOK_ASSIGN;
+	}
+
+ out:
+	*last_tok = tok->type;
+	return tok;
+}
 
 void read_word_subshell(struct input *in, struct str *output)
 {
 	struct str *tok;
 	int rparen_left = 1;
 	const char *s;
+	enum token_type last_tok = TOK_NONE;
 
 	while (1) {
-		tok = read_token(in);
+		tok = read_token(in, &last_tok);
 		str_push(output, ' ');
 		for (s = token_to_string(tok); *s; s++)
 			str_push(output, *s);
@@ -282,12 +326,6 @@ struct str *read_word(struct input *in, struct str *tok)
 		}
 	}
  out:
-	if (strcmp(tok->s, "for")  == 0) tok->type = TOK_FOR;
-	if (strcmp(tok->s, "in")   == 0) tok->type = TOK_IN;
-	if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
-	if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
-	if (strcmp(tok->s, "function") == 0) tok->type = TOK_FUNCTION;
-
 	return tok;
 }
 
@@ -305,7 +343,7 @@ struct str *read_word(struct input *in, struct str *tok)
 		}				\
 	} while (0)
 
-struct str *read_token(struct input *in)
+struct str *read_token_raw(struct input *in)
 {
 	int c;
 	int c2;
@@ -612,6 +650,22 @@ void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s)
 	}
 }
 
+/* merge other into c */
+void simple_cmd_merge(struct expr_simple_cmd *c, struct expr_simple_cmd *other)
+{
+	int i;
+	for (i = 0; i < other->size; i++) {
+		PUSH(c, words, other->words[i]);
+		other->words[i] = NULL;
+	}
+	if (other->redir.stdin.is_set)
+		c->redir.stdin = other->redir.stdin;
+	if (other->redir.stdout.is_set)
+		c->redir.stdout = other->redir.stdout;
+	if (other->redir.stderr.is_set)
+		c->redir.stderr = other->redir.stderr;
+}
+
 struct exec_result {
 	int status;
 	pid_t pid;
@@ -908,6 +962,7 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 	int rc, status;
 	int pipefd[2];
 	int i;
+	enum token_type last_tok = TOK_NONE;
 
 	struct input in = {
 		.type = INPUT_STR,
@@ -926,7 +981,7 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 	rparen_left = 1;
 	parser = ParseAlloc(malloc);
 	while (1) {
-		tok = read_token(&in);
+		tok = read_token(&in, &last_tok);
 		if (tok->type == TOK_LPAREN)
 			rparen_left++;
 		else if (tok->type == TOK_RPAREN) {
@@ -1486,6 +1541,7 @@ int main(void)
 	struct str *tok;
 	struct expr *root;
 	void *parser = ParseAlloc(malloc);
+	enum token_type last_tok = TOK_NONE;
 
 	L("initializing log");
 
@@ -1493,7 +1549,7 @@ int main(void)
 
 	while (1) {
 		/* read token */
-		tok = read_token(&in);
+		tok = read_token(&in, &last_tok);
 		printf("TOK: ");
 		dump_token(tok);
 
