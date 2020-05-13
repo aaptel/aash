@@ -120,6 +120,8 @@ struct str *str_new(void)
 
 void str_free(struct str *str)
 {
+	if (!str)
+		return;
 	free(str->s);
 	free(str);
 }
@@ -1435,6 +1437,48 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	}
 	return;
 }
+
+
+void expr_free(struct expr *e)
+{
+	if (!e)
+		return;
+
+	switch (e->type) {
+	case EXPR_SUB:
+		expr_free(e->sub.expr);
+		break;
+	case EXPR_NOT:
+		expr_free(e->not.expr);
+		break;
+	case EXPR_OR:
+	case EXPR_AND:
+		expr_free(e->and_or.left);
+		expr_free(e->and_or.right);
+		break;
+	case EXPR_PIPE:
+		expr_free(e->pipe.left);
+		expr_free(e->pipe.right);
+		break;
+	case EXPR_SIMPLE_CMD:
+		FREE_ARRAY(&e->simple_cmd, words, str_free);
+		break;
+	case EXPR_PROG:
+		FREE_ARRAY(&e->prog, cmds, expr_free);
+		break;
+	case EXPR_FOR:
+		str_free(e->efor.name);
+		FREE_ARRAY(&e->efor, words, str_free);
+		expr_free(e->efor.body);
+		break;
+	case EXPR_FUNCTION:
+		str_free(e->efor.name);
+		expr_free(e->efor.body);
+		break;
+	}
+	free(e);
+}
+
 
 int main(void)
 {

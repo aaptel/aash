@@ -19,6 +19,13 @@ struct str {
 };
 
 
+#define FREE_ARRAY(base, array, func)			\
+	do {						\
+		int i;					\
+		for (i = 0; i < (base)->size; i++)	\
+			func((base)->array[i]);		\
+	} while (0)					\
+
 #define PUSH(base, array, val)						\
 	do {								\
 		void *p;						\
@@ -108,6 +115,8 @@ struct expr {
 		} func;
 	};
 };
+
+void expr_free(struct expr *e);
 
 /* from parser.y */
 struct str;
