@@ -73,6 +73,7 @@ struct expr {
 		EXPR_SUB,
 		EXPR_FOR,
 		EXPR_FUNCTION,
+		EXPR_IF,
 	} type;
 	bool run_in_bg;
 	union {
@@ -113,6 +114,11 @@ struct expr {
 			struct str *name;
 			struct expr *body;
 		} func;
+		struct expr_if {
+			struct expr *test;
+			struct expr *xthen;
+			struct expr *xelse;
+		} eif;
 	};
 };
 

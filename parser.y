@@ -78,6 +78,32 @@ pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
 	R->pipe.right = C;
 }
 
+if_clause(R) ::= IF compound_list(T) THEN compound_list(XTHEN) else_part(XELSE) FI. {
+	R = expr_new(EXPR_IF);
+	R->eif.test = T;
+	R->eif.xthen = XTHEN;
+	R->eif.xelse = XELSE;
+}
+if_clause(R) ::= IF compound_list(T) THEN compound_list(XTHEN) FI. {
+	R = expr_new(EXPR_IF);
+	R->eif.test = T;
+	R->eif.xthen = XTHEN;
+}
+else_part(R) ::= ELIF compound_list(T) THEN compound_list(XTHEN). {
+	R = expr_new(EXPR_IF);
+	R->eif.test = T;
+	R->eif.xthen = XTHEN;
+}
+else_part(R) ::= ELIF compound_list(T) THEN compound_list(XTHEN) else_part(XELSE). {
+	R = expr_new(EXPR_IF);
+	R->eif.test = T;
+	R->eif.xthen = XTHEN;
+	R->eif.xelse = XELSE;
+}
+else_part(R) ::= ELSE compound_list(XELSE). {
+	R = XELSE;
+}
+
 function_definition(R) ::= FUNCTION WORD(N) LPAREN RPAREN linebreak function_body(E). {
 	R = expr_new(EXPR_FUNCTION);
 	R->func.name = N;
@@ -93,9 +119,10 @@ command(R) ::= compound_command(E). { R = E; }
 command(R) ::= compound_command(E) redirect_list(L). { R = E; R->sub.redir = L; }
 command(R) ::= function_definition(E). { R = E; }
 
-compound_command ::= subshell.
-compound_command ::= for_clause.
-compound_command ::= brace_group.
+compound_command(R) ::= subshell(E).    { R = E; }
+compound_command(R) ::= for_clause(E).  { R = E; }
+compound_command(R) ::= brace_group(E). { R = E; }
+compound_command(R) ::= if_clause(E).   { R = E; }
 
 subshell(R) ::= LPAREN compound_list(E) RPAREN. {
 	R = expr_new(EXPR_SUB);

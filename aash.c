@@ -201,6 +201,12 @@ struct str *read_token(struct input *in, enum token_type *last_tok)
 		else if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
 		else if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
 		else if (strcmp(tok->s, "function") == 0) tok->type = TOK_FUNCTION;
+		else if (strcmp(tok->s, "if")   == 0) tok->type = TOK_IF;
+		else if (strcmp(tok->s, "then") == 0) tok->type = TOK_THEN;
+		else if (strcmp(tok->s, "elif") == 0) tok->type = TOK_ELIF;
+		else if (strcmp(tok->s, "else") == 0) tok->type = TOK_ELSE;
+		else if (strcmp(tok->s, "fi")   == 0) tok->type = TOK_FI;
+
 
 		/* first word with '=' is an assign */
 		else if (strchr(tok->s, '=')) tok->type = TOK_ASSIGN;
@@ -448,6 +454,11 @@ const char *token_to_string(struct str *tok)
 	case TOK_DO: return "do";
 	case TOK_DONE: return "done";
 	case TOK_FUNCTION: return "function";
+	case TOK_IF: return "if";
+	case TOK_THEN: return "then";
+	case TOK_ELIF: return "elif";
+	case TOK_ELSE: return "else";
+	case TOK_FI: return "fi";
 	default: return "))UNKNOWN TOKEN((";
 	}
 }
@@ -479,6 +490,11 @@ void dump_token(struct str *tok)
 	case TOK_DO: puts("DO"); break;
 	case TOK_DONE: puts("DONE"); break;
 	case TOK_FUNCTION: puts("FUNCTION"); break;
+        case TOK_IF: puts("IF"); break;
+        case TOK_THEN: puts("THEN"); break;
+        case TOK_ELIF: puts("ELIF"); break;
+        case TOK_ELSE: puts("ELSE"); break;
+        case TOK_FI: puts("FI"); break;
 	default: puts("???"); break;
 	}
 }
@@ -597,6 +613,19 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 	case EXPR_FUNCTION:
 		IND_PRINT(n, "FUNCTION %s {", e->func.name->s);
 		dump_expr(e->func.body, n+1, graphviz);
+		IND_PRINT(n, "}\n");
+		break;
+	case EXPR_IF:
+		IND_PRINT(n, "IF {\n");
+		IND_PRINT(n+1, "TEST {\n");
+		dump_expr(e->eif.test, n+2, graphviz);
+		IND_PRINT(n+1, "}\n");
+		IND_PRINT(n+1, "THEN {\n");
+		dump_expr(e->eif.xthen, n+2, graphviz);
+		IND_PRINT(n+1, "}\n");
+		IND_PRINT(n+1, "ELSE {\n");
+		dump_expr(e->eif.xelse, n+2, graphviz);
+		IND_PRINT(n+1, "}\n");
 		IND_PRINT(n, "}\n");
 		break;
 	default:
@@ -1481,6 +1510,13 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		exec_set_func_binding(ctx, e->func.name->s, e);
 		res->status = 0;
 		break;
+	case EXPR_IF:
+		exec_expr(e->eif.test, ctx, res);
+		if (FAILED(res->status))
+			exec_expr(e->eif.xelse, ctx, res);
+		else
+			exec_expr(e->eif.xthen, ctx, res);
+		break;
 	default:
 		E("TODO");
 	}
@@ -1529,6 +1565,11 @@ void expr_free(struct expr *e)
 	case EXPR_FUNCTION:
 		str_free(e->efor.name);
 		expr_free(e->efor.body);
+		break;
+	case EXPR_IF:
+		expr_free(e->eif.test);
+		expr_free(e->eif.xthen);
+		expr_free(e->eif.xelse);
 		break;
 	}
 	free(e);

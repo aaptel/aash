@@ -252,6 +252,15 @@ def test_functions():
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
+def test_if():
+    err = 0
+    err += run_script('if true; then echo a; else echo b; fi', 'a\n', '', 0)
+    err += run_script('if true; then echo a; echo a; else echo b; fi', 'a\na\n', '', 0)
+    err += run_script('if false; then echo a; else echo b; fi', 'b\n', '', 0)
+    err += run_script('if false; then echo a; else echo b; echo b; fi', 'b\nb\n', '', 0)
+    err += run_script('if false; then echo a; elif false; then echo b; else echo c; fi', 'c\n', '', 0)
+    if err > 0:
+        raise MismatchError("%d mismatches"%err)
 
 def run_script(script, exp_out, exp_err, exp_rc):
     r = run(script)
