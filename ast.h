@@ -35,7 +35,7 @@ struct str {
 			       sz*((base)->capa-(base)->size));		\
 		}							\
 		(base)->array[(base)->size++] = val;			\
-	} while(0)
+	} while (0)
 
 
 struct cmd_redirect {

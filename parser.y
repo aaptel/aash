@@ -141,8 +141,14 @@ for_clause(R) ::= FOR WORD(N) linebreak IN wordlist(WL) sequential_sep do_group(
 	R->efor.body = G;
 }
 
-wordlist(R) ::= WORD(W). { R = expr_new(EXPR_FOR); PUSH(&R->efor, words, W); }
-wordlist(R) ::= wordlist(WL) WORD(W). { R = WL; PUSH(&R->efor, words, W); }
+wordlist(R) ::= WORD(W). {
+	R = expr_new(EXPR_FOR);
+	PUSH(&R->efor, words, W);
+}
+wordlist(R) ::= wordlist(WL) WORD(W). {
+	R = WL;
+	PUSH(&R->efor, words, W);
+}
 
 do_group(R) ::= DO compound_list(E) DONE. { R = E; }
 
