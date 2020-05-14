@@ -220,6 +220,7 @@ def test_for_loop():
     err += run_script('for i in a "b c"; do echo $i; done', 'a\nb c\n', '', 0)
     err += run_script('for i in a "b c"; do echo $i; echo x$i; done', 'a\nxa\nb c\nxb c\n', '', 0)
     err += run_script('v=foo; for i in a "$v c"; do echo $v$i; done', 'fooa\nfoofoo c\n', '', 0)
+    err += run_script('for i in $(seq 10); do echo $i; done', ''.join(["%d\n"%(i+1) for i in range(10)]), '', 0)
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
