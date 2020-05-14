@@ -21,6 +21,7 @@
 #define MAX_VAR_NAME_SIZE 32
 #define LOG_FILE "log.txt"
 
+#ifndef NDEBUG
 FILE *g_log = NULL;
 
 void log_write(const char *format, ...)
@@ -43,6 +44,7 @@ void log_write(const char *format, ...)
 
 	fflush(g_log);
 }
+#endif
 
 /*
  * Lexing
