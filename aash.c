@@ -732,6 +732,22 @@ struct exec_context {
 	} funcs;
 };
 
+bool is_func_var(const char *s)
+{
+	/*
+	 * $0 is global
+	 * $<n> are func vars
+	 * $@, $*, $# are func vars
+	 */
+	if (strcmp(s, "0") == 0)
+		return false;
+	if (is_all_digits(s))
+		return true;
+	if (strlen(s) != 1)
+		return false;
+	return strchr("@*#", *s);
+}
+
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res);
 
 struct vars *exec_get_func_vars(struct exec_context *exec)
@@ -745,16 +761,15 @@ struct vars *exec_get_func_vars(struct exec_context *exec)
 struct var_binding *exec_get_var_binding(struct exec_context *exec, const char *name)
 {
 	int i;
-	struct var_binding *v;
 	struct vars *vars;
+	struct var_binding *v;
 
 	if (!name || !*name) {
 		L("trying to get null var");
 		return NULL;
 	}
 
-	vars = is_all_digits(name) ? exec_get_func_vars(exec) : &exec->vars;
-
+	vars = is_func_var(name) ? exec_get_func_vars(exec) : &exec->vars;
 	for (i = 0; i < vars->size; i++) {
 		v = &vars->bindings[i];
 		if (v->name && strcmp(name, v->name) == 0)
@@ -781,14 +796,13 @@ void exec_set_var_binding(struct exec_context *exec, const char *name, const cha
 
 	L("name=<%s> val=<%s>", name, val);
 
+	vars = is_func_var(name) ? exec_get_func_vars(exec) : &exec->vars;
 	v = exec_get_var_binding(exec, name);
 	if (v) {
 		free(v->value);
 		v->value = strdup(val);
 		return;
 	}
-
-	vars = is_all_digits(name) ? exec_get_func_vars(exec) : &exec->vars;
 
 	struct var_binding newv = {
 		.name = strdup(name),
