@@ -814,6 +814,38 @@ void exec_set_var_binding(struct exec_context *exec, const char *name, const cha
 	PUSH(vars, bindings, newv);
 }
 
+void exec_set_var_binding_fmt(struct exec_context *exec, const char *name, const char *fmt, ...)
+{
+	va_list args;
+	int size = 0;
+	int rc = 0;
+	char *buf = NULL;
+
+	va_start(args, fmt);
+	rc = vsnprintf(buf, size, fmt, args);
+	va_end(args);
+
+	if (rc < 0) {
+		L("bad fmt? <%s>", fmt);
+		goto out;
+	}
+	size = rc;
+	buf = calloc(size, 1);
+
+	va_start(args, fmt);
+	rc = vsnprintf(buf, size, fmt, args);
+	va_end(args);
+	if (rc < 0) {
+		L("bad fmt? <%s>", fmt);
+		goto out;
+	}
+	assert(rc == size);
+	exec_set_var_binding(exec, name, buf);
+
+ out:
+	free(buf);
+}
+
 void exec_push_func_vars(struct exec_context *exec)
 {
 	PUSH(&exec->func_vars, stack, (struct vars){0});
@@ -1073,14 +1105,14 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 
 	if (pid == 0) {
 		/* child */
-		struct exec_context sub_exec = {0};
-		struct exec_result sub_res = {0};
+		struct exec_result res = {0};
 
 		L("in child");
+		exec_set_var_binding_fmt(exec, "$", "%d", getpid());
 		close(pipefd[0]);
 		dup2(pipefd[1], 1);
-		exec_expr(root, &sub_exec, &sub_res);
-		exit(STATUS_TO_EXIT(sub_res.status));
+		exec_expr(root, exec, &res);
+		exit(STATUS_TO_EXIT(res.status));
 	}
 
 	close(pipefd[1]);
@@ -1315,7 +1347,7 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 	 * We are in the child and about to exec, no need to worry
 	 * about freeing memory
 	 */
-
+	exec_set_var_binding_fmt(exec, "$", "%d", getpid());
 	expand_words(&expd, exec, expr->simple_cmd.words, expr->simple_cmd.size);
 
 	L("");
@@ -1353,10 +1385,7 @@ void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e
 		}
 		exec_set_var_binding(exec, buf, expd.words[i]->s);
 	}
-	rc = snprintf(buf, sizeof(buf), "%zu", expd.size-1);
-	if (rc > sizeof(buf))
-		buf[sizeof(buf)-1] = 0;
-	exec_set_var_binding(exec, "#", buf);
+	exec_set_var_binding_fmt(exec, "#", "%d", expd.size-1);
 
 	exec_expr(func->func.body, exec, res);
 
@@ -1388,6 +1417,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			res->pid = bg_pid;
 			goto out;
 		}
+		exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
 	}
 
 	switch (e->type) {
@@ -1474,6 +1504,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			dup2(pipefd[1], 1);
 			close(pipefd[0]);
 			close(pipefd[1]);
+			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
 			exec_expr(e->and_or.left, ctx, res);
 			exit(STATUS_TO_EXIT(res->status));
 		}
@@ -1486,6 +1517,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			dup2(pipefd[0], 0);
 			close(pipefd[0]);
 			close(pipefd[1]);
+			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
 			exec_expr(e->and_or.right, ctx, res);
 			exit(STATUS_TO_EXIT(res->status));
 		}
@@ -1504,6 +1536,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			E("fork");
 
 		if (child == 0) {
+			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
 			exec_apply_redir(&e->sub.redir);
 			exec_expr(e->sub.expr, ctx, res);
 			exit(STATUS_TO_EXIT(res->status));
@@ -1597,7 +1630,7 @@ void expr_free(struct expr *e)
 }
 
 
-int main(void)
+int main(int argc, const char **argv)
 {
 	struct input in = {.type = INPUT_FILE, .fh = stdin};
 	struct str *tok;
@@ -1632,6 +1665,8 @@ int main(void)
 	struct exec_result res = {0};
 	struct exec_context ctx = {0};
 
+	exec_set_var_binding(&ctx, "0", argv[0]);
+	exec_set_var_binding_fmt(&ctx, "$", "%d", getpid());
 	exec_expr(root, &ctx, &res);
 	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
 
