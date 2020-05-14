@@ -769,6 +769,8 @@ struct var_binding *exec_get_var_binding(struct exec_context *exec, const char *
 		return NULL;
 	}
 
+	L("name=<%s>", name);
+
 	vars = is_func_var(name) ? exec_get_func_vars(exec) : &exec->vars;
 	for (i = 0; i < vars->size; i++) {
 		v = &vars->bindings[i];
@@ -922,8 +924,9 @@ struct expand_context {
 	bool new_word_on_next_push;
 };
 
-const char* read_var(const char *s, char *name)
+const char* read_var(const char *start, char *name)
 {
+	const char *s = start;
 	char *out = name;
 	bool in_brace = false;
 
@@ -931,13 +934,20 @@ const char* read_var(const char *s, char *name)
 		in_brace = true;
 		s++;
 	}
+	if (strchr("#$!?", *s)) {
+		*out++ = *s++;
+		if (in_brace && *s && *s == '}')
+			s++;
+		goto out;
+	}
 	for (; *s; s++) {
 		if (in_brace) {
 			if (*s == '}')
 				goto out;
 		}
 		else {
-			if (!(strchr("$!?_#*", *s) || isalnum(*s))) {
+
+			if (!(*s == '_' || isalnum(*s))) {
 				s--;
 				goto out;
 			}
