@@ -837,10 +837,10 @@ void exec_set_var_binding_fmt(struct exec_context *exec, const char *name, const
 		goto out;
 	}
 	size = rc;
-	buf = calloc(size, 1);
+	buf = calloc(size+1, 1);
 
 	va_start(args, fmt);
-	rc = vsnprintf(buf, size, fmt, args);
+	rc = vsnprintf(buf, size+1, fmt, args);
 	va_end(args);
 	if (rc < 0) {
 		L("bad fmt? <%s>", fmt);
