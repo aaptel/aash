@@ -18,12 +18,13 @@ simple test shell implementing tiny subset of POSIX sh as an exercise.
   - variable assignement and reference (var=foo ; echo "$var" ${var} '$var' )
   - subshell expansion $(foo $(bar) )
   - for loops ( for i in $(seq 4); do echo $i; done )
+  - if/then/elif/else
   - functions ( function func() { echo foo; } ; func )
+  - some specials vars ($0 $1 $2 $# $$)
 
 * unsupported stuff so far:
   - no interactive mode
-  - not all compounded commands (if,while,until,case,...)
-  - no special variables ($0 $1 $@ ...)
+  - not all compounded commands (while,until,case,...)
   - ...
 
 build
@@ -42,7 +43,7 @@ usage
             echo exiting
     ' > test.sh
     # run it
-    $ ./aash < test.sh
+    $ ./aash --debug < test.sh
     === LEXING ===
     TOK: NEWLINE
     TOK: NEWLINE
