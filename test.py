@@ -250,6 +250,10 @@ def test_functions():
     err += run_script('function func1() { echo $1 $2; func2; echo $1 $2;} ; function func2() { echo $1 $2; } ; func1 a b',
                       'a b\n\na b\n', '', 0)
 
+    err += run_script('function foo() { echo $#; } ; foo ', '0\n', '', 0)
+    err += run_script('function foo() { echo $#; } ; foo a', '1\n', '', 0)
+    err += run_script('function foo() { echo $#; } ; foo a a', '2\n', '', 0)
+
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
