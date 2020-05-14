@@ -923,7 +923,7 @@ const char* read_var(const char *s, char *name)
 				goto out;
 		}
 		else {
-			if (!isalnum(*s) && *s != '_') {
+			if (!(strchr("$!?_#*", *s) || isalnum(*s))) {
 				s--;
 				goto out;
 			}
@@ -1130,7 +1130,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				continue;
 			}
 			if (exp->in_quote == '"' && c == '$') {
-				if (c2 == '{' || c2 == '_' || isalnum(c2)) {
+				if (strchr("$!?{_#*", c2) || isalnum(c2)) {
 					char var_name[MAX_VAR_NAME_SIZE];
 
 					s = read_var(s+1, var_name);
@@ -1158,7 +1158,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				continue;
 			}
 			if (c == '$') {
-				if (c2 == '{' || c2 == '_' || isalnum(c2)) {
+				if (strchr("$!?{_#*", c2) || isalnum(c2)) {
 					char var_name[MAX_VAR_NAME_SIZE];
 
 					s = read_var(s+1, var_name);
@@ -1179,6 +1179,19 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 	return;
 }
 
+void expand_words(struct expand_context *expd, struct exec_context *exec, struct str **ws, size_t nb)
+{
+	int i;
+
+	for (i = 0; i < nb; i++) {
+		struct str *w = ws[i];
+		// discard assignements
+		assert(w->type == TOK_WORD);
+		exec_expand(exec, expd, w);
+		if (i < nb-1)
+			expand_next_word(expd);
+	}
+}
 
 /*
  * Execution
@@ -1266,6 +1279,7 @@ void exec_assign(struct exec_context *exec, struct str *w)
 
 	/* done */
 	str_free(expanded);
+	FREE_ARRAY(&expd, words, str_free);
 }
 
 void exec_cmd(struct expr *expr, struct exec_context *exec)
@@ -1278,20 +1292,15 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 	 * about freeing memory
 	 */
 
-	for (i = 0; i < expr->simple_cmd.size; i++) {
-		struct str *w = expr->simple_cmd.words[i];
-		// discard assignements
-		assert(w->type == TOK_WORD);
-		exec_expand(exec, &expd, w);
-		if (i < expr->simple_cmd.size-1)
-			expand_next_word(&expd);
-	}
+	expand_words(&expd, exec, expr->simple_cmd.words, expr->simple_cmd.size);
 
+	L("");
 	char **argv = calloc(sizeof(*argv), expd.size+1);
 	for (i = 0; i < expd.size; i++) {
 		argv[i] = expd.words[i]->s;
 		if (!argv[i])
 			argv[i] = "";
+		L("exec argv[%2d] = <%s>", i, argv[i]);
 	}
 	exec_apply_redir(&expr->simple_cmd.redir);
 	execvp(argv[0], argv);
@@ -1299,38 +1308,31 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 }
 
 void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e, struct exec_result *res)
-{
-	struct expr_simple_cmd *cmd = &e->simple_cmd;
-	char name[MAX_VAR_NAME_SIZE] = {0};
+{	struct expr_simple_cmd *cmd = &e->simple_cmd;
+	char buf[MAX_VAR_NAME_SIZE] = {0};
 	struct expand_context expd = {0};
 	int i;
 	int rc;
 
-	/*
-	 * Expand all arguments
-	 */
-	for (i = 1; i < cmd->size; i++) {
-		struct str *w = cmd->words[i];
-		// discard assignements
-		if (w->type == TOK_WORD) {
-			exec_expand(exec, &expd, w);
-			expand_next_word(&expd);
-		}
-	}
+	expand_words(&expd, exec, cmd->words, cmd->size);
 
 	/*
 	 * Push new var bindings for position arguments
 	 */
 	exec_push_func_vars(exec);
 
-	for (i = 0; i < expd.size; i++) {
-		rc = snprintf(name, MAX_VAR_NAME_SIZE, "%d", i+1);
-		if (rc > MAX_VAR_NAME_SIZE) {
-			name[MAX_VAR_NAME_SIZE-1] = 0;
-			L("truncated var name %d => <%s>", i+1, name);
+	for (i = 1; i < expd.size; i++) {
+		rc = snprintf(buf, sizeof(buf), "%d", i);
+		if (rc > sizeof(buf)) {
+			buf[sizeof(buf)-1] = 0;
+			L("truncated var name %d => <%s>", i, buf);
 		}
-		exec_set_var_binding(exec, name, expd.words[i]->s);
+		exec_set_var_binding(exec, buf, expd.words[i]->s);
 	}
+	rc = snprintf(buf, sizeof(buf), "%zu", expd.size-1);
+	if (rc > sizeof(buf))
+		buf[sizeof(buf)-1] = 0;
+	exec_set_var_binding(exec, "#", buf);
 
 	exec_expr(func->func.body, exec, res);
 
@@ -1339,7 +1341,7 @@ void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e
 	 */
 	exec_pop_func_vars(exec);
 
-	// TODO free expand
+	FREE_ARRAY(&expd, words, str_free);
 }
 
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
@@ -1492,18 +1494,13 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	{
 		struct expand_context expd = {0};
 
-		for (i = 0; i < e->efor.size; i++) {
-			L("expanding <%s>", e->efor.words[i]->s);
-			exec_expand(ctx, &expd, e->efor.words[i]);
-			expand_next_word(&expd);
-		}
-
+		expand_words(&expd, ctx, e->efor.words, e->efor.size);
 		for (i = 0; i < expd.size; i++) {
 			L("expanded <%s>", expd.words[i]->s);
 			exec_set_var_binding(ctx, e->efor.name->s, expd.words[i]->s);
 			exec_expr(e->efor.body, ctx, res);
 		}
-		// TODO free expd
+		FREE_ARRAY(&expd, words, str_free);
 		break;
 	}
 	case EXPR_FUNCTION:
@@ -1610,6 +1607,7 @@ int main(void)
 
 	struct exec_result res = {0};
 	struct exec_context ctx = {0};
+
 	exec_expr(root, &ctx, &res);
 	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
 
