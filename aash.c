@@ -21,6 +21,9 @@
 #define MAX_VAR_NAME_SIZE 32
 #define LOG_FILE "log.txt"
 
+const char *g_progname = NULL;
+bool g_debug = false;
+
 #ifndef NDEBUG
 FILE *g_log = NULL;
 
@@ -732,6 +735,8 @@ struct exec_context {
 		size_t size;
 		size_t capa;
 	} funcs;
+
+	bool interactive;
 };
 
 bool is_func_var(const char *s)
@@ -1631,24 +1636,38 @@ void expr_free(struct expr *e)
 	free(e);
 }
 
-
-int main(int argc, const char **argv)
+void usage()
 {
-	struct input in = {.type = INPUT_FILE, .fh = stdin};
+	fprintf(stderr,
+		"Usage: %s [--debug] [-c CMD] [--] [SCRIPT [ARGS...]]\n"
+		"Options:\n"
+		"   -c CMD\n"
+		"        run CMD\n"
+		"   --debug\n"
+		"        print parsing debug info\n",
+		g_progname);
+}
+
+int run(struct input *in, int argc, const char** argv, bool interactive)
+{
 	struct str *tok;
-	struct expr *root;
-	void *parser = ParseAlloc(malloc);
 	enum token_type last_tok = TOK_NONE;
+	struct expr *root;
+	void *parser;
+	struct exec_result res = {0};
+	struct exec_context exec = {.interactive = interactive};
 
-	L("initializing log");
+	if (g_debug)
+		printf("=== LEXING ===\n");
 
-	printf("=== LEXING ===\n");
-
+	parser = ParseAlloc(malloc);
 	while (1) {
 		/* read token */
-		tok = read_token(&in, &last_tok);
-		printf("TOK: ");
-		dump_token(tok);
+		tok = read_token(in, &last_tok);
+		if (g_debug) {
+			printf("TOK: ");
+			dump_token(tok);
+		}
 
 		/* feed it to parser */
 		Parse(parser, tok->type, tok, &root);
@@ -1657,20 +1676,91 @@ int main(int argc, const char **argv)
 	}
 	ParseFree(parser, free);
 
-	printf("=== PARSING ===\n");
+	if (g_debug) {
+		printf("=== PARSING ===\n");
+		dump_expr(root, 0, false);
+		printf("=== RUNNING ===\n");
+		fflush(NULL);
+	}
 
-	dump_expr(root, 0, false);
+	exec_set_var_binding_fmt(&exec, "$", "%d", getpid());
 
-	printf("=== RUNNING ===\n");
-	fflush(NULL);
+	for (int i = 0; i < argc; i++) {
+		char name[MAX_VAR_NAME_SIZE] = {0};
+		int rc = snprintf(name, sizeof(name), "%d", i);
+		if (rc > sizeof(name))
+			E("too many args");
+		exec_set_var_binding(&exec, name, argv[i]);
+	}
+	exec_set_var_binding_fmt(&exec, "#", "%d", argc-1);
+	exec_expr(root, &exec, &res);
 
-	struct exec_result res = {0};
-	struct exec_context ctx = {0};
+	if (g_debug) {
+		printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
+		return 0;
+	} else {
+		return STATUS_TO_EXIT(res.status);
+	}
+}
 
-	exec_set_var_binding(&ctx, "0", argv[0]);
-	exec_set_var_binding_fmt(&ctx, "$", "%d", getpid());
-	exec_expr(root, &ctx, &res);
-	printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
+int main(int argc, const char **argv)
+{
+	const char *command = NULL;
+	const char **script_argv = NULL;
+	int script_argc = 0;
+	bool interactive = false;
 
-	return 0;
+	g_progname = argv[0];
+
+	L("initializing log");
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--debug") == 0)
+			g_debug = true;
+		else if (strcmp(argv[i], "-c") == 0 && i+1 < argc) {
+			command = argv[++i];
+		}
+		else if (strcmp(argv[i], "--") == 0) {
+			script_argv = &argv[++i];
+			script_argc = argc-i;
+			break;
+		} else if (argv[i][0] == '-') {
+			W("invalid option <%s>", argv[i]);
+			usage();
+			return 1;
+		} else {
+			script_argv = &argv[i];
+			script_argc = argc-i;
+			break;
+		}
+	}
+
+	struct input in = {0};
+
+	if (command) {
+		in = (struct input){
+			.type = INPUT_STR,
+			.start = command,
+			.s = command,
+			.len = strlen(command),
+		};
+	} else if (script_argc >= 1) {
+		FILE *fh = fopen(script_argv[0], "r");
+		if (!fh) {
+			perror("fopen");
+			return 1;
+		}
+		in = (struct input){
+			.type = INPUT_FILE,
+			.fh = fh,
+		};
+	} else {
+		interactive = 1;
+		in = (struct input){
+			.type = INPUT_FILE,
+			.fh = stdin,
+		};
+	}
+
+	return run(&in, script_argc, script_argv, interactive);
 }
