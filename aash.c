@@ -1531,11 +1531,21 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_PIPE:
 	{
 		struct pipe_pairs *pipes = pipe_pairs_new(e->pipe.size-1);
+		pid_t process_group = 0;
+		pid_t process_last;
 
 		for (i = 0; i < e->pipe.size; i++) {
 			rcpid = fork();
 			if (rcpid < 0)
 				E("fork");
+			/*
+			 * Put whole pipeline in the process group of the first
+			 * process. Note: this is run by both child & parent.
+			 */
+			if (i == 0)
+				process_group = rcpid;
+
+			rc = setpgid(rcpid, process_group);
 
 			if (rcpid == 0) {
 				/* child */
@@ -1548,11 +1558,18 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 				exec_expr(e->pipe.cmds[i], ctx, res);
 				exit(STATUS_TO_EXIT(res->status));
 			}
+			process_last = rcpid;
 		}
 		pipe_pairs_free(pipes);
-		rcpid = waitpid(rcpid, &res->status, 0);
-		if (rcpid < 0)
-			E("waitpid");
+
+		for (i = 0; i < e->pipe.size; i++) {
+			int status;
+			rcpid = waitpid(-process_group, &status, 0);
+			if (rcpid < 0)
+				E("waitpid");
+			if (rcpid == process_last)
+				res->status = status;
+		}
 		break;
 	}
 	case EXPR_SUB:
