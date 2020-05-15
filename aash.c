@@ -586,7 +586,10 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		DUMP_BINARY(n, e, "OR", and_or);
 		break;
 	case EXPR_PIPE:
-		DUMP_BINARY(n, e, "PIPE", pipe);
+		IND_PRINT(n, "PIPE {\n");
+		for (i = 0; i < e->pipe.size; i++)
+			dump_expr(e->pipe.cmds[i], n+1, graphviz);
+		IND_PRINT(n, "}\n");
 		break;
 	case EXPR_SIMPLE_CMD:
 		IND_PRINT(n, "CMD ");
@@ -738,6 +741,39 @@ struct exec_context {
 
 	bool interactive;
 };
+
+struct pipe_pairs {
+	int size;
+	int fd[];
+};
+
+int pipe_pairs_get(struct pipe_pairs *pp, int i, int end)
+{
+	return pp->fd[2*i + end];
+}
+
+struct pipe_pairs *pipe_pairs_new(int size)
+{
+	int i;
+	struct pipe_pairs *pp;
+
+	pp = calloc(1, sizeof(*pp)+(2*sizeof(int))*size);
+	pp->size = size;
+	for (i = 0; i < pp->size; i++)
+		pipe(&pp->fd[2*i]);
+	return pp;
+}
+
+void pipe_pairs_free(struct pipe_pairs *pp)
+{
+	int i;
+	for (i = 0; i < pp->size; i++) {
+		close(pp->fd[i*2+0]);
+		close(pp->fd[i*2+1]);
+	}
+	free(pp);
+}
+
 
 bool is_func_var(const char *s)
 {
@@ -1494,44 +1530,27 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		break;
 	case EXPR_PIPE:
 	{
-		int pipefd[2];
-		pid_t left, right;
+		struct pipe_pairs *pipes = pipe_pairs_new(e->pipe.size-1);
 
-		// TODO: avoid extra forks?
+		for (i = 0; i < e->pipe.size; i++) {
+			rcpid = fork();
+			if (rcpid < 0)
+				E("fork");
 
-		rc = pipe(pipefd);
-		if (rc < 0)
-			E("pipe");
-
-		left = fork();
-		if (left < 0)
-			E("fork");
-
-		if (left == 0) {
-			dup2(pipefd[1], 1);
-			close(pipefd[0]);
-			close(pipefd[1]);
-			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-			exec_expr(e->and_or.left, ctx, res);
-			exit(STATUS_TO_EXIT(res->status));
+			if (rcpid == 0) {
+				/* child */
+				if (i-1 >= 0)
+					dup2(pipe_pairs_get(pipes, i-1, 0), 0);
+				if (i+1 < e->pipe.size)
+					dup2(pipe_pairs_get(pipes, i, 1), 1);
+				pipe_pairs_free(pipes);
+				exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
+				exec_expr(e->pipe.cmds[i], ctx, res);
+				exit(STATUS_TO_EXIT(res->status));
+			}
 		}
-
-		right = fork();
-		if (right < 0)
-			E("fork");
-
-		if (right == 0) {
-			dup2(pipefd[0], 0);
-			close(pipefd[0]);
-			close(pipefd[1]);
-			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-			exec_expr(e->and_or.right, ctx, res);
-			exit(STATUS_TO_EXIT(res->status));
-		}
-
-		close(pipefd[0]);
-		close(pipefd[1]);
-		rcpid = waitpid(right, &res->status, 0);
+		pipe_pairs_free(pipes);
+		rcpid = waitpid(rcpid, &res->status, 0);
 		if (rcpid < 0)
 			E("waitpid");
 		break;
@@ -1609,8 +1628,7 @@ void expr_free(struct expr *e)
 		expr_free(e->and_or.right);
 		break;
 	case EXPR_PIPE:
-		expr_free(e->pipe.left);
-		expr_free(e->pipe.right);
+		FREE_ARRAY(&e->pipe, cmds, expr_free);
 		break;
 	case EXPR_SIMPLE_CMD:
 		FREE_ARRAY(&e->simple_cmd, words, str_free);

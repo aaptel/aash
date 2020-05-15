@@ -89,8 +89,9 @@ struct expr {
 			struct expr *right;
 		} and_or;
 		struct expr_pipe {
-			struct expr *left;
-			struct expr *right;
+			struct expr **cmds;
+			size_t size;
+			size_t capa;
 		} pipe;
 		struct expr_simple_cmd {
 			struct str **words;

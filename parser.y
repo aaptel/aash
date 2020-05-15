@@ -73,9 +73,14 @@ pipeline(R) ::= NOT pipe_sequence(E). {
 
 pipe_sequence(R) ::= command(E). { R = E; }
 pipe_sequence(R) ::= pipe_sequence(E) PIPE linebreak command(C). {
-	R = expr_new(EXPR_PIPE);
-	R->pipe.left = E;
-	R->pipe.right = C;
+	if (E->type == EXPR_PIPE) {
+		R = E;
+		PUSH(&R->pipe, cmds, C);
+	} else {
+		R = expr_new(EXPR_PIPE);
+		PUSH(&R->pipe, cmds, E);
+		PUSH(&R->pipe, cmds, C);
+	}
 }
 
 if_clause(R) ::= IF compound_list(T) THEN compound_list(XTHEN) else_part(XELSE) FI. {
