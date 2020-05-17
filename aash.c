@@ -1553,7 +1553,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	{
 		struct pipe_pairs *pipes = pipe_pairs_new(e->pipe.size-1);
 		pid_t process_group = 0;
-		pid_t process_last;
+		pid_t process_last = 0;
 
 		for (i = 0; i < e->pipe.size; i++) {
 			rcpid = fork();
