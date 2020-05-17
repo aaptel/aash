@@ -130,34 +130,54 @@ def test_arg_expansion():
     err += run_arg_expansion(r'     """"    x', ['', 'x'])
 
 
-    var = "var=foo;"
+    var = "var=foo; ./dump_argv"
     err += run_arg_expansion(r''' $var ''', ['foo'], pre=var)
     err += run_arg_expansion(r''' ${var} ''', ['foo'], pre=var)
     err += run_arg_expansion(r''' "${var}" ''', ['foo'], pre=var)
     err += run_arg_expansion(r''' " ${var} " ''', [' foo '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
-    var = "var='foo  bar';"
+    var = "var='foo  bar'; ./dump_argv"
     err += run_arg_expansion(r''' $var ''', ['foo', 'bar'], pre=var)
     err += run_arg_expansion(r''' ${var} ''', ['foo', 'bar'], pre=var)
     err += run_arg_expansion(r''' "${var}" ''', ['foo  bar'], pre=var)
     err += run_arg_expansion(r''' " ${var} " ''', [' foo  bar '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
-    var = "var=;"
+    var = "var=; ./dump_argv"
     err += run_arg_expansion(r''' $var ''', [], pre=var)
     err += run_arg_expansion(r''' ${var} ''', [], pre=var)
     err += run_arg_expansion(r''' "${var}" ''', [''], pre=var)
     err += run_arg_expansion(r''' " ${var} " ''', ['  '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
-    var = ""
+    var = "./dump_argv"
     err += run_arg_expansion(r''' $var ''', [], pre=var)
     err += run_arg_expansion(r''' ${var} ''', [], pre=var)
     err += run_arg_expansion(r''' "${var}" ''', [''], pre=var)
     err += run_arg_expansion(r''' " ${var} " ''', ['  '], pre=var)
     err += run_arg_expansion(r''' ' $var ' ''', [' $var '], pre=var)
     err += run_arg_expansion(r''' ' ${var} ' ''', [' ${var} '], pre=var)
+
+    pre = 'function f(){ ./dump_argv $@ ; } ; f '
+    err += run_arg_expansion(r'', [], pre=pre)
+    err += run_arg_expansion(r''' a b c ''', ['a', 'b', 'c'], pre=pre)
+    err += run_arg_expansion(r''' aa bb cc ''', ['aa', 'bb', 'cc'], pre=pre)
+    err += run_arg_expansion(r''' "aa" "bb" "cc" ''', ['aa', 'bb', 'cc'], pre=pre)
+    err += run_arg_expansion(r''' "aa bb" "cc" ''', ['aa', 'bb', 'cc'], pre=pre)
+    pre = 'function f(){ ./dump_argv "$@" ; } ; f '
+    err += run_arg_expansion(r'', [], pre=pre)
+    err += run_arg_expansion(r''' a b c ''', ['a', 'b', 'c'], pre=pre)
+    err += run_arg_expansion(r''' aa bb cc ''', ['aa', 'bb', 'cc'], pre=pre)
+    err += run_arg_expansion(r''' "aa" "bb" "cc" ''', ['aa', 'bb', 'cc'], pre=pre)
+    err += run_arg_expansion(r''' "aa bb" "cc" ''', ['aa bb', 'cc'], pre=pre)
+    pre = 'function f(){ ./dump_argv "x$@y" ; } ; f '
+    err += run_arg_expansion(r'', ['xy'], pre=pre)
+    err += run_arg_expansion(r''' a b c ''', ['xa', 'b', 'cy'], pre=pre)
+    err += run_arg_expansion(r''' aa bb cc ''', ['xaa', 'bb', 'ccy'], pre=pre)
+    err += run_arg_expansion(r''' "aa" "bb" "cc" ''', ['xaa', 'bb', 'ccy'], pre=pre)
+    err += run_arg_expansion(r''' "aa bb" "cc" ''', ['xaa bb', 'ccy'], pre=pre)
+
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
@@ -290,14 +310,16 @@ def run_script(script, exp_out, exp_err, exp_rc):
         ok("%-40s => %s"%(script, out))
     return 0
 
-def run_arg_expansion(arg, expected, pre=''):
-    r = run(pre+'./dump_argv '+arg)
+def run_arg_expansion(arg, expected, pre=None):
+    if pre is None:
+        pre = './dump_argv '
+    r = run(pre+arg)
     out = re.findall(r'''^<(.*?)>$''', r.scriptout, flags=(re.M|re.S))
 
     if OPTS.verbose >= 2:
         print('  ', '-'*70, '\n', r, sep='', end='')
 
-    rr = run_posix(pre+'./dump_argv '+arg)
+    rr = run_posix(pre+arg)
     posix = re.findall(r'''^<(.*?)>$''', rr.stdout, flags=(re.M|re.S))
 
     if posix != expected:

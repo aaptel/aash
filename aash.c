@@ -1009,9 +1009,9 @@ const char* read_var(const char *start, char *name)
 		in_brace = true;
 		s++;
 	}
-	if (strchr("#$!?", *s)) {
-		*out++ = *s++;
-		if (in_brace && *s && *s == '}')
+	if (strchr("#$!?@", *s)) {
+		*out++ = *s;
+		if (in_brace && *(s+1) && *(s+1) == '}')
 			s++;
 		goto out;
 	}
@@ -1062,7 +1062,28 @@ void expand_next_word(struct expand_context *exp)
 void expand_push_var(struct exec_context *exec, struct expand_context *exp, const char *var)
 {
 	const char *s;
-	struct var_binding *v = exec_get_var_binding(exec, var);
+	struct var_binding *v;
+
+	if (strcmp(var, "@") == 0) {
+		int i, last;
+		struct vars *vars = exec_get_func_vars(exec);
+		for (i = 0; i < vars->size; i++) {
+			v = &vars->bindings[i];
+			if (!is_all_digits(v->name)) {
+				last = i-1;
+				break;
+			}
+		}
+		for (i = 0; i <= last; i++) {
+			v = &vars->bindings[i];
+			expand_push_var(exec, exp, v->name);
+			if (i < last)
+				expand_next_word(exp);
+		}
+		return;
+	}
+
+	v = exec_get_var_binding(exec, var);
 	if (!v)
 		return;
 
@@ -1229,7 +1250,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				continue;
 			}
 			if (exp->in_quote == '"' && c == '$') {
-				if (strchr("$!?{_#*", c2) || isalnum(c2)) {
+				if (strchr("$!?{_#*@", c2) || isalnum(c2)) {
 					char var_name[MAX_VAR_NAME_SIZE];
 
 					s = read_var(s+1, var_name);
@@ -1257,7 +1278,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				continue;
 			}
 			if (c == '$') {
-				if (strchr("$!?{_#*", c2) || isalnum(c2)) {
+				if (strchr("$!?{_#*@", c2) || isalnum(c2)) {
 					char var_name[MAX_VAR_NAME_SIZE];
 
 					s = read_var(s+1, var_name);
@@ -1273,7 +1294,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 		}
 	}
  out:
-	if (contained_quotes && exp->total_added - added_at_start == 0)
+	if (contained_quotes && exp->total_added - added_at_start == 0 && strcmp(in->s, "\"$@\"") != 0)
 		expand_next_word(exp);
 	return;
 }
