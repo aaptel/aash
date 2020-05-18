@@ -13,6 +13,7 @@
 
 #include "dbg.h"
 #include "ast.h"
+#include "lex.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
@@ -57,6 +58,7 @@ struct input {
 	enum input_type {
 		INPUT_FILE,
 		INPUT_STR,
+		INPUT_INTERACTIVE,
 	} type;
 	union {
 		FILE *fh;
@@ -146,14 +148,7 @@ void str_push(struct str *str, char c)
 	}
 
 	str->s[str->size++] = c;
-}
-
-void read_comment(struct input *in) {
-	int c;
-	while ((c = in_getc(in)) != EOF) {
-		if (c == '\n')
-			return;
-	}
+	str->s[str->size] = 0;
 }
 
 bool is_all_digits(const char *s)
@@ -171,259 +166,6 @@ bool is_word_all_digits(struct str *w)
 
 
 const char *token_to_string(struct str *);
-struct str *read_token_raw(struct input *in);
-struct str *read_token(struct input *in, enum token_type *last_tok)
-{
-	struct str *tok = read_token_raw(in);
-
-	if (tok->type != TOK_WORD)
-		goto out;
-
-	/*
-	 * Current token is a word but is it special?
-	 */
-	switch (*last_tok) {
-	case TOK_WORD:
-		/* if last token was a non-special word, remaining words are normal */
-		break;
-	case TOK_FOR:
-		/* "for" expects a variable name */
-		tok->type = TOK_NAME;
-		break;
-	case TOK_NAME:
-		/* "for" NAME "in": we expect a IN word here */
-		if (strcmp(tok->s, "in") == 0)
-			tok->type = TOK_IN;
-		break;
-	case TOK_ASSIGN:
-		/* a sequence of assign can occur in "a=1 b=2 cmd arg..." */
-		if (strchr(tok->s, '='))
-			tok->type = TOK_ASSIGN;
-	default:
-		/* otherwise we are starting a command, look for special word */
-		if      (strcmp(tok->s, "for")  == 0) tok->type = TOK_FOR;
-		else if (strcmp(tok->s, "in")   == 0) tok->type = TOK_IN;
-		else if (strcmp(tok->s, "do")   == 0) tok->type = TOK_DO;
-		else if (strcmp(tok->s, "done") == 0) tok->type = TOK_DONE;
-		else if (strcmp(tok->s, "function") == 0) tok->type = TOK_FUNCTION;
-		else if (strcmp(tok->s, "if")   == 0) tok->type = TOK_IF;
-		else if (strcmp(tok->s, "then") == 0) tok->type = TOK_THEN;
-		else if (strcmp(tok->s, "elif") == 0) tok->type = TOK_ELIF;
-		else if (strcmp(tok->s, "else") == 0) tok->type = TOK_ELSE;
-		else if (strcmp(tok->s, "fi")   == 0) tok->type = TOK_FI;
-
-
-		/* first word with '=' is an assign */
-		else if (strchr(tok->s, '=')) tok->type = TOK_ASSIGN;
-	}
-
- out:
-	*last_tok = tok->type;
-	return tok;
-}
-
-void read_word_subshell(struct input *in, struct str *output)
-{
-	struct str *tok;
-	int rparen_left = 1;
-	const char *s;
-	enum token_type last_tok = TOK_NONE;
-
-	while (1) {
-		tok = read_token(in, &last_tok);
-		str_push(output, ' ');
-		for (s = token_to_string(tok); *s; s++)
-			str_push(output, *s);
-
-		if (tok->type == TOK_LPAREN)
-			rparen_left++;
-		else if (tok->type == TOK_RPAREN) {
-			rparen_left--;
-			if (rparen_left == 0)
-				break;
-		}
-		else if (tok->type == TOK_NONE) {
-			break;
-		}
-
-		str_free(tok);
-	}
-
-	str_free(tok);
-}
-
-struct str *read_word(struct input *in, struct str *tok)
-{
-	int in_quote = 0;
-	int c;
-	int c2;
-
-	tok->type = TOK_WORD;
-
-	while ((c = in_getc(in)) != EOF) {
-		if (in_quote) {
-			if (c == in_quote) {
-				in_quote = 0;
-			}
-			else if (c == '$') {
-				c2 = in_getc(in);
-				if (c2 == EOF) {
-					str_push(tok, c);
-					goto out;
-				}
-				if (in_quote == '"' && c2 == '(') {
-					str_push(tok, c);
-					str_push(tok, c2);
-					read_word_subshell(in, tok);
-					continue;
-				}
-				str_push(tok, c);
-				str_push(tok, c2);
-				continue;
-			}
-			else if (c == '\\') {
-				c2 = in_getc(in);
-				if (c2 == EOF) {
-					str_push(tok, c);
-					goto out;
-				}
-				if (c2 == '\n') // line continuation
-					continue;
-				c = c2;
-			}
-			str_push(tok, c);
-			continue;
-		} else {
-			if (c == '\\') {
-				c2 = in_getc(in);
-				if (c2 == EOF) {
-					str_push(tok, c);
-					goto out;
-				}
-				if (c2 == '\n') // line continuation
-					continue;
-				str_push(tok, c2);
-				continue;
-			}
-
-			if (c == '$') {
-				c2 = in_getc(in);
-				if (c2 == EOF) {
-					str_push(tok, c);
-					goto out;
-				}
-				if (c2 == '(') {
-					str_push(tok, c);
-					str_push(tok, c2);
-					read_word_subshell(in, tok);
-					continue;
-				}
-				str_push(tok, c);
-				str_push(tok, c2);
-				continue;
-			}
-
-			if (strchr("#|&><!()\n\t ;", c)) {
-				if (c == '>' && is_word_all_digits(tok)) {
-					tok->type = TOK_IO_NUMBER;
-				}
-				in_ungetc(in, c);
-				goto out;
-			}
-			if (strchr("`\"'", c)) {
-				in_quote = c;
-			}
-			str_push(tok, c);
-		}
-	}
- out:
-	return tok;
-}
-
-#define READ_DOUBLE_OP(op2, tok1, tok2)		\
-	do {					\
-		c2 = in_getc(in);		\
-		if (c2 == op2) {		\
-			tok->type = tok2;	\
-		} else {			\
-			tok->type = tok1;	\
-			if (c2 == EOF)		\
-				goto eof;	\
-			in_ungetc(in, c2);	\
-			goto out;		\
-		}				\
-	} while (0)
-
-struct str *read_token_raw(struct input *in)
-{
-	int c;
-	int c2;
-	struct str *tok = str_new();
-
-	while (1) {
-	next_char:
-		switch (c = in_getc(in)) {
-		eof:
-		case EOF:
-			tok->type = TOK_NONE;
-			goto out;
-		case '{':
-			tok->type = TOK_LBRACE;
-			goto out;
-		case '}':
-			tok->type = TOK_RBRACE;
-			goto out;
-		case '#':
-			read_comment(in);
-			break;
-		case '|':
-			READ_DOUBLE_OP('|', TOK_PIPE, TOK_OR);
-			goto out;
-		case '&':
-			READ_DOUBLE_OP('&', TOK_BG, TOK_AND);
-			goto out;
-		case '>':
-			c2 = in_getc(in);
-			if (c2 == '>')
-				tok->type = TOK_REDIR_APPEND;
-			else if (c2 == '&')
-				tok->type = TOK_REDIR_FD;
-			else {
-				tok->type = TOK_REDIR_OUT;
-				in_ungetc(in, c2);
-			}
-			goto out;
-		case '<':
-			tok->type = TOK_REDIR_IN;
-			goto out;
-		case '!':
-			tok->type = TOK_NOT;
-			goto out;
-		case '(':
-			tok->type = TOK_LPAREN;
-			goto out;
-		case ')':
-			tok->type = TOK_RPAREN;
-			goto out;
-		case '\n':
-			tok->type = TOK_NEWLINE;
-			goto out;
-		case ';':
-			tok->type = TOK_SEMICOL;
-			goto out;
-		case ' ':
-		case '\t':
-			goto next_char;
-		default:
-			/* WORD and quoted strings */
-			in_ungetc(in, c);
-			read_word(in, tok);
-			goto out;
-		}
-	}
- out:
-	return tok;
-}
 
 struct expr *expr_new(enum expr_type type)
 {
@@ -1106,19 +848,11 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 	const char *end;
 	struct str *tok;
 	struct str *output;
-	int rparen_left;
 	pid_t pid, rcpid;
 	int rc, status;
 	int pipefd[2];
 	int i;
-	enum token_type last_tok = TOK_NONE;
-
-	struct input in = {
-		.type = INPUT_STR,
-		.start = s,
-		.s = s,
-		.len = strlen(s),
-	};
+	struct input_scanner scan;
 
 	L("s=<%s>", s);
 
@@ -1127,27 +861,27 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 	 * of the word
 	 */
 
-	rparen_left = 1;
+	scanner_init(&scan);
+	scanner_refill(&scan, s, strlen(s));
+	scanner_push_state(&scan, XLPAREN);
 	parser = ParseAlloc(malloc);
 	while (1) {
-		tok = read_token(&in, &last_tok);
-		if (tok->type == TOK_LPAREN)
-			rparen_left++;
-		else if (tok->type == TOK_RPAREN) {
-			rparen_left--;
-			if (rparen_left == 0)
+		scanner_step(&scan);
+		if (scan.err || scanner_needs_more_input(&scan)) {
+			E("tokenizing error");
+		}
+		if (scan.ready) {
+			tok = scan.ready;
+			L("TOK: <%s>", token_to_string(tok));
+			if (scan.state_size == 1)
 				break;
+			Parse(parser, tok->type, tok, &root);
 		}
-		else if (tok->type == TOK_NONE) {
-			break;
-		}
-
-		Parse(parser, tok->type, tok, &root);
 	}
 
 	/* end points to next char after final ), or EOF */
-	end = in.s-1;
-
+	end = &s[scan.input_pos];
+	L("end=<%s>", end);
 	/*
 	 * Parse subshell
 	 */
@@ -1259,6 +993,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				}
 				if (c2 == '(') {
 					 s = expand_push_subshell(exec, exp, s+2);
+					 s--;
 					 continue;
 				}
 			}
@@ -1287,6 +1022,7 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 				}
 				if (c2 == '(') {
 					 s = expand_push_subshell(exec, exp, s+2);
+					 s--;
 					 continue;
 				}
 			}
@@ -1704,33 +1440,79 @@ void usage()
 		g_progname);
 }
 
+void in_read_line(struct input *in, struct str *line)
+{
+	line->size = 0;
+	while (1) {
+		int c = in_getc(in);
+		if (c == EOF)
+			break;
+		str_push(line, c);
+		if (c == '\n')
+			break;
+	}
+}
+
+
+void in_read_all(struct input *in, struct str *line)
+{
+	line->size = 0;
+	while (1) {
+		int c = in_getc(in);
+		if (c == EOF)
+			break;
+		str_push(line, c);
+	}
+	str_push(line, '\n');
+}
+
 int run(struct input *in, int argc, const char** argv, bool interactive)
 {
 	struct str *tok;
-	enum token_type last_tok = TOK_NONE;
 	struct expr *root;
 	void *parser;
 	struct exec_result res = {0};
 	struct exec_context exec = {.interactive = interactive};
+	struct str *src;
+	struct input_scanner scan;
+
+	src = str_new();
+	in_read_all(in, src);
+	scanner_init(&scan);
+	scanner_refill(&scan, src->s, src->size);
 
 	if (g_debug)
 		printf("=== LEXING ===\n");
 
 	parser = ParseAlloc(malloc);
 	while (1) {
-		/* read token */
-		tok = read_token(in, &last_tok);
-		if (g_debug) {
-			printf("TOK: ");
-			dump_token(tok);
+		scanner_step(&scan);
+		if (scan.ready) {
+			/* read token */
+			tok = scan.ready;
+			if (g_debug) {
+				printf("TOK: ");
+				dump_token(tok);
+			}
+			/* feed it to parser */
+			Parse(parser, tok->type, tok, &root);
 		}
-
-		/* feed it to parser */
-		Parse(parser, tok->type, tok, &root);
-		if (tok->type == TOK_NONE)
+		if (scanner_needs_more_input(&scan)) {
+			E("malformed input");
+		}
+		else if (scanner_is_complete(&scan)) {
+			if (scan.err) {
+				E("tokenizing error");
+			}
 			break;
+		}
 	}
+	Parse(parser, TOK_NONE, NULL, &root);
 	ParseFree(parser, free);
+
+	if (!root) {
+		E("parsing error");
+	}
 
 	if (g_debug) {
 		printf("=== PARSING ===\n");

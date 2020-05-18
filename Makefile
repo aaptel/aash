@@ -11,11 +11,11 @@ parser.c: parser.y lempar.c lemon
 parser.o: parser.c ast.h dbg.h
 	gcc -Wall -Wno-unused-variable -ggdb3 -c -o $@ $<
 
-
 %.o: %.c
 	gcc -ggdb3 -Wall `[ $(DEBUG) = 0 ] && echo -DNDEBUG` -o $@ -c $<
 aash.o: aash.c ast.h dbg.h parser.c
-aash: aash.o parser.o
+lex.o: lex.c ast.h dbg.h lex.h
+aash: aash.o parser.o lex.o
 	gcc -ggdb3 -Wall -o $@ $^
 
 clean:
