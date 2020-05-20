@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <termios.h>
 
 #include "dbg.h"
 #include "ast.h"
@@ -24,6 +25,14 @@
 
 const char *g_progname = NULL;
 bool g_debug = false;
+bool g_interactive = false;
+pid_t g_main_pid;
+struct termios g_term_modes;
+
+bool is_main_pid(void)
+{
+	return g_main_pid == getpid();
+}
 
 #ifndef NDEBUG
 FILE *g_log = NULL;
@@ -58,7 +67,6 @@ struct input {
 	enum input_type {
 		INPUT_FILE,
 		INPUT_STR,
-		INPUT_INTERACTIVE,
 	} type;
 	union {
 		FILE *fh;
@@ -483,6 +491,40 @@ struct exec_context {
 
 	bool interactive;
 };
+
+void init_shell(void)
+{
+	pid_t shell_pgid;
+
+	g_main_pid = getpid();
+
+	if (!g_interactive)
+		return;
+
+	/* Loop until we are in the foreground.  */
+	while (tcgetpgrp(0) != (shell_pgid = getpgrp()))
+		kill(-shell_pgid, SIGTTIN);
+
+	/* Ignore interactive and job-control signals.  */
+	signal(SIGINT, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
+	signal(SIGTSTP, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
+	signal(SIGCHLD, SIG_IGN);
+
+	/* Put ourselves in our own process group.  */
+	if (setpgid(g_main_pid, g_main_pid) < 0) {
+		perror ("Couldn't put the shell in its own process group");
+		exit(1);
+	}
+
+	/* Grab control of the terminal.  */
+	tcsetpgrp(0, g_main_pid);
+
+	/* Save default terminal attributes for shell.  */
+	tcgetattr(0, &g_term_modes);
+}
 
 struct pipe_pairs {
 	int size;
@@ -1303,6 +1345,8 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 				process_group = rcpid;
 
 			rc = setpgid(rcpid, process_group);
+			if (rc < 0)
+				E("setpgid");
 
 			if (rcpid == 0) {
 				/* child */
@@ -1466,13 +1510,81 @@ void in_read_all(struct input *in, struct str *line)
 	str_push(line, '\n');
 }
 
-int run(struct input *in, int argc, const char** argv, bool interactive)
+int run_interactive(struct input *in, int argc, const char** argv)
+{
+	struct str *tok;
+	struct expr *root;
+	void *parser = NULL;
+	struct exec_result res = {0};
+	struct exec_context exec = {.interactive = true};
+	struct str *src;
+	struct input_scanner scan;
+
+	src = str_new();
+	exec_set_var_binding_fmt(&exec, "$", "%d", getpid());
+
+	while (1) {
+	next_cmd:
+		printf("$ ");
+		in_read_line(in, src);
+		scanner_init(&scan);
+		scanner_refill(&scan, src->s, src->size);
+		if (parser)
+			ParseFree(parser, free);
+		parser = ParseAlloc(malloc);
+
+		while (1) {
+			scanner_step(&scan);
+			if (scan.ready) {
+				/* read token */
+				tok = scan.ready;
+				/* feed it to parser */
+				Parse(parser, tok->type, tok, &root);
+			}
+			if (scanner_needs_more_input(&scan)) {
+				printf("> ");
+				in_read_line(in, src);
+				scanner_refill(&scan, src->s, src->size);
+			}
+			else if (scanner_is_complete(&scan)) {
+				if (scan.err) {
+					W("tokenizing error");
+					goto next_cmd;
+				}
+				break;
+			}
+		}
+		Parse(parser, TOK_NONE, NULL, &root);
+		if (!root) {
+			E("parsing error");
+		}
+
+		if (g_debug) {
+			printf("=== PARSING ===\n");
+			dump_expr(root, 0, false);
+			printf("=== RUNNING ===\n");
+			fflush(NULL);
+		}
+
+
+		exec_expr(root, &exec, &res);
+
+		if (g_debug) {
+			printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
+		} else {
+			//return STATUS_TO_EXIT(res.status);
+		}
+	}
+	return 0;
+}
+
+int run_script(struct input *in, int argc, const char** argv)
 {
 	struct str *tok;
 	struct expr *root;
 	void *parser;
 	struct exec_result res = {0};
-	struct exec_context exec = {.interactive = interactive};
+	struct exec_context exec = {0};
 	struct str *src;
 	struct input_scanner scan;
 
@@ -1546,7 +1658,6 @@ int main(int argc, const char **argv)
 	const char *command = NULL;
 	const char **script_argv = NULL;
 	int script_argc = 0;
-	bool interactive = false;
 
 	g_progname = argv[0];
 
@@ -1593,12 +1704,17 @@ int main(int argc, const char **argv)
 			.fh = fh,
 		};
 	} else {
-		interactive = 1;
+		g_interactive = isatty(0);
 		in = (struct input){
 			.type = INPUT_FILE,
 			.fh = stdin,
 		};
 	}
 
-	return run(&in, script_argc, script_argv, interactive);
+	init_shell();
+
+	if (g_interactive)
+		return run_interactive(&in, argc, argv);
+	else
+		return run_script(&in, argc, argv);
 }

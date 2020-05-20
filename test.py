@@ -340,7 +340,7 @@ def run_arg_expansion(arg, expected, pre=None):
 
 def run(script):
     try:
-        r = sp.run([PROG, '--debug'], input=script, timeout=TIMEOUT, encoding='utf-8', capture_output=True)
+        r = sp.run([PROG, '--debug', '-c', script], timeout=TIMEOUT, encoding='utf-8', capture_output=True)
     except sp.TimeoutExpired as e:
         raise TimeoutError("process took over %ds"%TIMEOUT, script) from e
     if r.returncode < 0:
