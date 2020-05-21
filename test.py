@@ -387,27 +387,27 @@ class SignalError(TestException):
         self.script = script
         self.result = result
     def __str__(self):
-        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
+        return "%s: %s\n%s\n%s"%(super().__str__(),self.script,self.result.stdout,self.result.stderr)
 class ParseError(TestException):
     def __init__(self, message, script, result):
         super().__init__(message)
         self.script = script
         self.result = result
     def __str__(self):
-        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
+        return "%s: %s\n%s\n%s"%(super().__str__(),self.script,self.result.stdout,self.result.stderr)
 class OutputError(TestException):
     def __init__(self, message, script, result):
         super().__init__(message)
         self.result = result
     def __str__(self):
-        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
+        return "%s: %s\n%s\n%s"%(super().__str__(),self.script,self.result.stdout,self.result.stderr)
 class ExitError(TestException):
     def __init__(self, message, script, result):
         super().__init__(message)
         self.script = script
         self.result = result
     def __str__(self):
-        return "%s: %s\n%s"%(super().__str__(),self.script,self.result.stdout)
+        return "%s: %s\n%s\n%s"%(super().__str__(),self.script,self.result.stdout,self.result.stderr)
 class MismatchError(TestException):
     def __init__(self, message):
         super().__init__(message)
@@ -416,7 +416,7 @@ class TimeoutError(TestException):
         super().__init__(message)
         self.script = script
     def __str__(self):
-        return "%s: %s\n%s"%(super().__str__(),self.script)
+        return "%s: %s\n"%(super().__str__(),self.script)
 
 # class Unbuffered(object):
 #    def __init__(self, stream):
