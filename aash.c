@@ -1034,9 +1034,9 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 					continue;
 				}
 				if (c2 == '(') {
-					 s = expand_push_subshell(exec, exp, s+2);
-					 s--;
-					 continue;
+					s = expand_push_subshell(exec, exp, s+2);
+					s--;
+					continue;
 				}
 			}
 			expand_push(exp, c);
@@ -1063,9 +1063,9 @@ void exec_expand(struct exec_context *exec, struct expand_context *exp, struct s
 					continue;
 				}
 				if (c2 == '(') {
-					 s = expand_push_subshell(exec, exp, s+2);
-					 s--;
-					 continue;
+					s = expand_push_subshell(exec, exp, s+2);
+					s--;
+					continue;
 				}
 			}
 			expand_push(exp, c);
