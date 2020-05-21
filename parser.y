@@ -121,7 +121,7 @@ brace_group(R) ::= LBRACE compound_list(E) RBRACE. { R = E; }
 
 command(R) ::= simple_command(E). { R = E; }
 command(R) ::= compound_command(E). { R = E; }
-command(R) ::= compound_command(E) redirect_list(L). { R = E; R->sub.redir = L; }
+command(R) ::= compound_command(E) redirect_list(L). { R = E; R->redir = L; }
 command(R) ::= function_definition(E). { R = E; }
 
 compound_command(R) ::= subshell(E).    { R = E; }
@@ -175,7 +175,7 @@ do_group(R) ::= DO compound_list(E) DONE. { R = E; }
 simple_command(R) ::= cmd_prefix(A) WORD(W) cmd_suffix(B). {
 	R = A;
 	PUSH(&R->simple_cmd, words, W);
-	simple_cmd_merge(&R->simple_cmd, &B->simple_cmd);
+	simple_cmd_merge(R, B);
 	expr_free(B);
 }
 simple_command(R) ::= cmd_prefix(A) WORD(W). {
@@ -186,7 +186,7 @@ simple_command(R) ::= cmd_prefix(A). { R = A; }
 simple_command(R) ::= WORD(W) cmd_suffix(E). {
 	R = expr_new(EXPR_SIMPLE_CMD);
 	PUSH(&R->simple_cmd, words, W);
-	simple_cmd_merge(&R->simple_cmd, &E->simple_cmd);
+	simple_cmd_merge(R, E);
 	expr_free(E);
 }
 simple_command(R) ::= WORD(W). {
@@ -196,11 +196,11 @@ simple_command(R) ::= WORD(W). {
 
 cmd_prefix(R) ::=               io_redirect(REDIR). {
 	R = expr_new(EXPR_SIMPLE_CMD);
-	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+	cmd_redirect_merge(&R->redir, &REDIR);
 }
 cmd_prefix(R) ::= cmd_prefix(E) io_redirect(REDIR). {
 	R = E;
-	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+	cmd_redirect_merge(&R->redir, &REDIR);
 }
 cmd_prefix(R) ::=               ASSIGN(W). {
 	R = expr_new(EXPR_SIMPLE_CMD);
@@ -213,11 +213,11 @@ cmd_prefix(R) ::= cmd_prefix(E) ASSIGN(W). {
 
 cmd_suffix(R) ::=               io_redirect(REDIR). {
 	R = expr_new(EXPR_SIMPLE_CMD);
-	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+	cmd_redirect_merge(&R->redir, &REDIR);
 }
 cmd_suffix(R) ::= cmd_suffix(E) io_redirect(REDIR). {
 	R = E;
-	cmd_redirect_merge(&R->simple_cmd.redir, &REDIR);
+	cmd_redirect_merge(&R->redir, &REDIR);
 }
 cmd_suffix(R) ::=               WORD(W). {
 	R = expr_new(EXPR_SIMPLE_CMD);

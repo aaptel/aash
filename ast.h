@@ -57,10 +57,10 @@ struct cmd_redirect {
 	} stdin, stdout, stderr;
 };
 
-struct expr_simple_cmd;
+struct expr;
 void stream_redirect_init(struct stream_redirect *sr, struct str *mode, struct str *file);
 void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s);
-void simple_cmd_merge(struct expr_simple_cmd *c, struct expr_simple_cmd *other);
+void simple_cmd_merge(struct expr *c, struct expr *other);
 
 struct expr {
 	enum expr_type {
@@ -76,10 +76,10 @@ struct expr {
 		EXPR_IF,
 	} type;
 	bool run_in_bg;
+	struct cmd_redirect redir;
 	union {
 		struct expr_sub {
 			struct expr *expr;
-			struct cmd_redirect redir;
 		} sub;
 		struct expr_not {
 			struct expr *expr;
@@ -97,7 +97,6 @@ struct expr {
 			struct str **words;
 			size_t size;
 			size_t capa;
-			struct cmd_redirect redir;
 		} simple_cmd;
 		struct prog {
 			struct expr **cmds;

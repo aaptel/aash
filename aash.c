@@ -291,12 +291,15 @@ void indent(int n)
 
 void dump_cmd_redirect(struct cmd_redirect *c)
 {
-	printf("REDIR ");
+	bool printed_redir = false;
+
 	if (c->stdin.is_set) {
+		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		assert(!c->stdin.is_fd);
 		printf("stdin=%s ", c->stdin.fn->s);
 	}
 	if (c->stdout.is_set) {
+		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		printf("stdout=");
 		if (c->stdout.is_fd)
 			printf("fd%d ", c->stdout.fd);
@@ -304,6 +307,7 @@ void dump_cmd_redirect(struct cmd_redirect *c)
 			printf("fn<%s> ", c->stdout.fn->s);
 	}
 	if (c->stderr.is_set) {
+		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		printf("stderr=");
 		if (c->stderr.is_fd)
 			printf("fd%d ", c->stderr.fd);
@@ -322,6 +326,8 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 	}
 
 	if (e->run_in_bg) { IND_PRINT(n, "(in bg) "); }
+	dump_cmd_redirect(&e->redir);
+
 	switch (e->type) {
 	case EXPR_PROG:
 		IND_PRINT(n, "PROG {\n");
@@ -345,7 +351,6 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		IND_PRINT(n, "CMD ");
 		for (i = 0; i < e->simple_cmd.size; i++)
 			printf("<%s> ", e->simple_cmd.words[i]->s);
-		dump_cmd_redirect(&e->simple_cmd.redir);
 		putchar('\n');
 		break;
 	case EXPR_NOT:
@@ -355,7 +360,6 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		break;
 	case EXPR_SUB:
 		IND_PRINT(n, "SUBSHELL ");
-		dump_cmd_redirect(&e->sub.redir);
 		printf(" {\n");
 		dump_expr(e->sub.expr, n+1, graphviz);
 		IND_PRINT(n, "}\n");
@@ -438,12 +442,16 @@ void cmd_redirect_merge(struct cmd_redirect *c, struct stream_redirect *s)
 }
 
 /* merge other into c */
-void simple_cmd_merge(struct expr_simple_cmd *c, struct expr_simple_cmd *other)
+void simple_cmd_merge(struct expr *c, struct expr *other)
 {
 	int i;
-	for (i = 0; i < other->size; i++) {
-		PUSH(c, words, other->words[i]);
-		other->words[i] = NULL;
+
+	assert(c->type == EXPR_SIMPLE_CMD);
+	assert(other->type == EXPR_SIMPLE_CMD);
+
+	for (i = 0; i < other->simple_cmd.size; i++) {
+		PUSH(&c->simple_cmd, words, other->simple_cmd.words[i]);
+		other->simple_cmd.words[i] = NULL;
 	}
 	if (other->redir.stdin.is_set)
 		c->redir.stdin = other->redir.stdin;
@@ -1200,7 +1208,7 @@ void exec_cmd(struct expr *expr, struct exec_context *exec)
 			argv[i] = "";
 		L("exec argv[%2d] = <%s>", i, argv[i]);
 	}
-	exec_apply_redir(&expr->simple_cmd.redir);
+	exec_apply_redir(&expr->redir);
 	execvp(argv[0], argv);
 	exit(1);
 }
@@ -1381,7 +1389,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 		if (child == 0) {
 			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-			exec_apply_redir(&e->sub.redir);
+			exec_apply_redir(&e->redir);
 			exec_expr(e->sub.expr, ctx, res);
 			exit(STATUS_TO_EXIT(res->status));
 		}
