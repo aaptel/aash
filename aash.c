@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <termios.h>
+#include <errno.h>
 
 #include "dbg.h"
 #include "ast.h"
@@ -485,9 +486,6 @@ struct exec_result {
 };
 
 struct exec_context {
-	pid_t *bg_jobs;
-	size_t size;
-	size_t capa;
 
 	/* globals */
 	struct vars {
@@ -515,8 +513,302 @@ struct exec_context {
 		size_t capa;
 	} funcs;
 
+	struct job {
+		struct job *next;           /* next active job */
+		char *command;              /* command line, used for messages */
+		struct process {
+			struct expr *expr;
+			pid_t pid;                  /* process ID */
+			int status;                 /* reported status value */
+			bool completed;             /* true if process has completed */
+			bool stopped;               /* true if process has stopped */
+		} *procs;                    /* list of processes in this job */
+		size_t size;
+		size_t capa;
+
+		pid_t pgid;                 /* process group ID */
+		struct termios tmodes;      /* saved terminal modes */
+		bool notified;              /* true if user told about stopped job */
+	} *jobs;
+
 	bool interactive;
+	bool forked_from_pipe;
 };
+
+void wait_for_job(struct exec_context *exec, struct job *j);
+void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont);
+void put_job_in_background(struct exec_context *exec, struct job *j, int cont);
+
+struct job *job_new(struct exec_context *exec)
+{
+	struct job *j = calloc(1, sizeof(*j));
+	j->next = exec->jobs;
+	exec->jobs = j;
+	return j;
+}
+
+void job_add_proc(struct job *job, pid_t pid, struct expr *expr)
+{
+	L("adding pid %ld to job", (long)pid);
+	struct process pr = {.pid = pid, .expr = expr};
+	PUSH(job, procs, pr);
+	if (g_interactive) {
+		setpgid(pid, job->pgid);
+	}
+}
+
+/* Format information about job status for the user to look at.  */
+void format_job_info(struct job *j, const char *status)
+{
+	fprintf(stderr, "%ld (%s)\n", (long)j->pgid, status);
+}
+
+
+/* Find the active job with the indicated pgid.  */
+struct job *job_find(struct exec_context *exec, pid_t pgid)
+{
+	struct job *j;
+
+	for (j = exec->jobs; j; j = j->next)
+		if (j->pgid == pgid)
+			return j;
+	return NULL;
+}
+
+void job_free(struct job *j)
+{
+	if (!j)
+		return;
+	free(j->procs);
+	free(j);
+}
+
+/* Return true if all processes in the job have stopped or completed.  */
+bool job_is_stopped(struct job *j)
+{
+	int i;
+	struct process *p;
+
+	for (i = 0; i < j->size; i++) {
+		p = &j->procs[i];
+		if (!p->completed && !p->stopped)
+			return false;
+	}
+	return true;
+}
+
+/* Return true if all processes in the job have completed.  */
+bool job_is_completed(struct job *j)
+{
+	int i;
+	struct process *p;
+
+	for (i = 0; i < j->size; i++) {
+		p = &j->procs[i];
+		if (!p->completed)
+			return false;
+	}
+	return true;
+}
+
+
+/* Put job j in the foreground.  If cont is nonzero,
+   restore the saved terminal modes and send the process group a
+   SIGCONT signal to wake it up before we block.  */
+
+void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont)
+{
+	L("pgid=%ld", (long)j->pgid);
+
+	/* Put the job into the foreground.  */
+	tcsetpgrp(0, j->pgid);
+
+
+	/* Send the job a continue signal, if necessary.  */
+	if (cont) {
+		tcsetattr(0, TCSADRAIN, &j->tmodes);
+		if (kill(-j->pgid, SIGCONT) < 0)
+			perror("kill (SIGCONT)");
+	}
+
+
+	/* Wait for it to report.  */
+	wait_for_job(exec, j);
+
+	/* Put the shell back in the foreground.  */
+	tcsetpgrp(0, g_main_pid);
+
+
+	/* Restore the shell's terminal modes.  */
+	tcgetattr(0, &j->tmodes);
+	tcsetattr(0, TCSADRAIN, &g_term_modes);
+}
+
+/* Put a job in the background.  If the cont argument is true, send
+   the process group a SIGCONT signal to wake it up.  */
+void put_job_in_background(struct exec_context *exec, struct job *j, int cont)
+{
+	L("");
+	/* Send the job a continue signal, if necessary.  */
+	if (cont)
+		if (kill(-j->pgid, SIGCONT) < 0)
+			perror("kill (SIGCONT)");
+}
+
+/* Store the status of the process pid that was returned by waitpid.
+   Return 0 if all went well, nonzero otherwise.  */
+
+int mark_process_status(struct exec_context *exec, pid_t pid, int status)
+{
+	struct job *j;
+	struct process *p;
+	int i;
+
+	if (pid > 0) {
+		/* Update the record for the process.  */
+		for (j = exec->jobs; j; j = j->next) {
+			for (i = 0; i < j->size; i++) {
+				p = &j->procs[i];
+				if (p->pid != pid)
+					continue;
+
+				p->status = status;
+				if (WIFSTOPPED(status))
+					p->stopped = 1;
+				else {
+					p->completed = 1;
+					if (WIFSIGNALED(status))
+						fprintf(stderr, "%d: Terminated by signal %d.\n",
+							(int) pid, WTERMSIG(p->status));
+				}
+				return 0;
+			}
+		}
+		fprintf(stderr, "No child process %d.\n", pid);
+		return -1;
+	}
+
+	else if (pid == 0 || errno == ECHILD) {
+		/* No processes ready to report.  */
+		errno = 0;
+		return -1;
+	} else {
+		/* Other weird errors.  */
+		perror("waitpid");
+		return -1;
+	}
+}
+
+bool job_get_status(struct job *j, int *status)
+{
+	int i;
+	struct process *p;
+
+	*status = W_EXITCODE(0, 0);
+
+	for (i = 0; i < j->size; i++) {
+		p = &j->procs[i];
+		if (!p->completed)
+			return false;
+
+		if (FAILED(p->status)) {
+			*status = p->status;
+			break;
+		}
+	}
+	return true;
+}
+
+/* Check for processes that have status information available,
+   blocking until all processes in the given job have reported.  */
+
+void wait_for_job(struct exec_context *exec, struct job *j)
+{
+	int status;
+	pid_t pid;
+
+	do
+		pid = waitpid(WAIT_ANY, &status, WUNTRACED);
+	while (!mark_process_status(exec, pid, status)
+	       && !job_is_stopped(j)
+	       && !job_is_completed(j));
+
+}
+
+/* Notify the user about stopped or terminated jobs.
+   Delete terminated jobs from the active job list.  */
+
+void do_job_notification(struct exec_context *exec)
+{
+	struct job *j, *jlast, *jnext;
+	int status;
+	pid_t pid;
+	int i;
+
+	L("");
+	L("===========");
+
+	/* Update status information for child processes.  */
+	do {
+		pid = waitpid(WAIT_ANY, &status, WUNTRACED|WNOHANG);
+	} while (!mark_process_status(exec, pid, status));
+
+	jlast = NULL;
+	for (j = exec->jobs; j; j = jnext) {
+		jnext = j->next;
+		L("job group %d", j->pgid);
+		for (i = 0; i < j->size; i++) {
+			struct process *p = &j->procs[i];
+			L("proc %d: status %x %s %s",
+			  p->pid, p->status, p->completed?"completed":"", p->stopped?"stopped":"");
+		}
+
+		/* If all processes have completed, tell the user the job has
+		   completed and delete it from the list of active jobs.  */
+		if (job_is_completed(j)) {
+			format_job_info(j, "completed");
+			if (jlast)
+				jlast->next = jnext;
+			else
+				exec->jobs = jnext;
+			job_free(j);
+		}
+
+		/* Notify the user about stopped jobs,
+		   marking them so that we won't do this more than once.  */
+		else if (job_is_stopped(j) && !j->notified) {
+			format_job_info(j, "stopped");
+			j->notified = 1;
+			jlast = j;
+		}
+
+		/* Don't say anything about jobs that are still running.  */
+		else
+			jlast = j;
+	}
+	L("===========");
+	L("");
+}
+
+/* Mark a stopped job J as being running again.  */
+void mark_job_as_running(struct job *j)
+{
+	int i;
+	for (i = 0; i < j->size; i++)
+		j->procs[i].stopped = 0;
+	j->notified = false;
+}
+
+
+/* Continue the job J.  */
+void job_continue(struct exec_context *exec,  struct job *j, int foreground)
+{
+	mark_job_as_running(j);
+	if (foreground)
+		put_job_in_foreground(exec, j, 1);
+	else
+		put_job_in_background(exec, j, 1);
+}
 
 void init_shell(void)
 {
@@ -537,7 +829,7 @@ void init_shell(void)
 	signal(SIGTSTP, SIG_IGN);
 	signal(SIGTTIN, SIG_IGN);
 	signal(SIGTTOU, SIG_IGN);
-	signal(SIGCHLD, SIG_IGN);
+	//signal(SIGCHLD, SIG_IGN);
 
 	/* Put ourselves in our own process group.  */
 	if (setpgid(g_main_pid, g_main_pid) < 0) {
@@ -762,20 +1054,39 @@ typedef int (*builtin_func_t) (struct expr_simple_cmd *, struct exec_context *, 
 
 int builtin_wait(struct expr_simple_cmd *cmd, struct exec_context *ctx, struct exec_result *res)
 {
-	pid_t rc, pid;
+	struct job *j = ctx->jobs;
 
-	/* wait last created pid */
-
-	if (ctx->size == 0) {
-		res->status = 1;
-		return 1;
+	while (j) {
+		if (!job_is_completed(j))
+			wait_for_job(ctx, j);
+		j = j->next;
 	}
 
-	pid = ctx->bg_jobs[ctx->size-1];
-	rc = waitpid(pid, &res->status, 0);
-	if (rc < 0)
+	res->status = W_EXITCODE(0, 0);
+	return 0;
+}
+
+int builtin_bg(struct expr_simple_cmd *cmd, struct exec_context *ctx, struct exec_result *res)
+{
+	struct job *j = ctx->jobs;
+	if (!j)
 		return 1;
 
+	job_continue(ctx, j, 0);
+
+	res->status = W_EXITCODE(0, 0);
+	return 0;
+}
+
+int builtin_fg(struct expr_simple_cmd *cmd, struct exec_context *ctx, struct exec_result *res)
+{
+	struct job *j = ctx->jobs;
+	if (!j)
+		return 1;
+
+	job_continue(ctx, j, 1);
+
+	res->status = W_EXITCODE(0, 0);
 	return 0;
 }
 
@@ -784,6 +1095,8 @@ struct {
 	builtin_func_t func;
 } g_builtins[] = {
 	{"wait", builtin_wait},
+	{"fg", builtin_fg},
+	{"bg", builtin_bg},
 };
 
 builtin_func_t builtin_find(const char *name)
@@ -1265,35 +1578,47 @@ void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e
 	FREE_ARRAY(&expd, words, str_free);
 }
 
+void exec_job_shell_setup(struct expr *e, struct exec_context *exec, pid_t child, pid_t group)
+{
+	if (g_interactive) {
+		setpgid(child, group);
+	}
+}
+
+void exec_job_child_setup(struct expr *e, struct exec_context *exec, struct job *job)
+{
+	L("inter = %d", !!g_interactive);
+
+	if (g_interactive) {
+		setpgid(getpid(), job->pgid);
+		if (!e->run_in_bg) {
+			tcsetpgrp(0, job->pgid);
+		}
+		signal(SIGINT, SIG_DFL);
+		signal(SIGQUIT, SIG_DFL);
+		signal(SIGTSTP, SIG_DFL);
+		signal(SIGTTIN, SIG_DFL);
+		signal(SIGTTOU, SIG_DFL);
+		signal(SIGCHLD, SIG_DFL);
+		g_interactive = false;
+	}
+}
+
 void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
 {
 	int i;
-	pid_t rcpid, bg_pid;
-	int rc;
+	pid_t rcpid;
 	builtin_func_t builtin;
 	struct expr *func;
 
 	assert(e);
-
-	if (e->run_in_bg) {
-		bg_pid = fork();
-		if (bg_pid < 0)
-			E("fork");
-		if (bg_pid != 0) {
-			/* parent */
-			PUSH(ctx, bg_jobs, bg_pid);
-			res->pid = bg_pid;
-			goto out;
-		}
-		exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-	}
 
 	switch (e->type) {
 	case EXPR_PROG:
 		for (i = 0; i < e->prog.size; i++)
 			exec_expr(e->prog.cmds[i], ctx, res);
 		break;
-	case EXPR_SIMPLE_CMD:
+	case EXPR_SIMPLE_CMD: {
 		/* simple cmd is also used for assignments... */
 		if (e->simple_cmd.size == 1 && e->simple_cmd.words[0]->type == TOK_ASSIGN) {
 			exec_assign(ctx, e->simple_cmd.words[0]);
@@ -1312,21 +1637,43 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			exec_func_call(ctx, func, e, res);
 			goto out;
 		}
+
+		if (ctx->forked_from_pipe) {
+			/* dont fork again if from pipe */
+			L("exec no fork");
+			exec_cmd(e, ctx);
+			exit(1);
+		}
+
+		struct job *job = job_new(ctx);
+		L("new job %p", job);
+
 		/* otherwise fork & exec */
 		res->pid = fork();
 		if (res->pid < 0)
 			E("fork");
 
+		job->pgid = res->pid ? res->pid : getpid();
 		if (res->pid == 0) {
 			/* child */
+			exec_job_child_setup(e, ctx, job);
 			exec_cmd(e, ctx);
 			/* should never return */
 			exit(1);
 		}
 
-		rcpid = waitpid(res->pid, &res->status, 0);
-		if (rcpid < 0)
-			E("waitpid");
+		job_add_proc(job, res->pid, e);
+
+		if (g_interactive) {
+			if (e->run_in_bg)
+				put_job_in_background(ctx, job, 0);
+			else
+				put_job_in_foreground(ctx, job, 0);
+		} else {
+			wait_for_job(ctx, job);
+		}
+		job_get_status(job, &res->status);
+	}
 		break;
 	case EXPR_AND:
 		/* run left, stop if failure */
@@ -1356,47 +1703,47 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_PIPE:
 	{
 		struct pipe_pairs *pipes = pipe_pairs_new(e->pipe.size-1);
-		pid_t process_group = 0;
-		pid_t process_last = 0;
+		struct job *job = job_new(ctx);
+		L("new job %p", job);
 
 		for (i = 0; i < e->pipe.size; i++) {
+			struct expr *sube = e->pipe.cmds[i];
+
 			rcpid = fork();
 			if (rcpid < 0)
 				E("fork");
-			/*
-			 * Put whole pipeline in the process group of the first
-			 * process. Note: this is run by both child & parent.
-			 */
-			if (i == 0)
-				process_group = rcpid;
 
-			rc = setpgid(rcpid, process_group);
-			if (rc < 0)
-				E("setpgid");
+			if (i == 0) {
+				job->pgid = rcpid ? rcpid : getpid();
+			}
 
 			if (rcpid == 0) {
 				/* child */
+				ctx->forked_from_pipe = true;
+				exec_job_child_setup(e, ctx, job);
 				if (i-1 >= 0)
 					dup2(pipe_pairs_get(pipes, i-1, 0), 0);
 				if (i+1 < e->pipe.size)
 					dup2(pipe_pairs_get(pipes, i, 1), 1);
 				pipe_pairs_free(pipes);
+				exec_apply_redir(&e->redir);
 				exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
 				exec_expr(e->pipe.cmds[i], ctx, res);
 				exit(STATUS_TO_EXIT(res->status));
 			}
-			process_last = rcpid;
+			job_add_proc(job, rcpid, sube);
 		}
 		pipe_pairs_free(pipes);
 
-		for (i = 0; i < e->pipe.size; i++) {
-			int status;
-			rcpid = waitpid(-process_group, &status, 0);
-			if (rcpid < 0)
-				E("waitpid");
-			if (rcpid == process_last)
-				res->status = status;
+		if (g_interactive) {
+			if (!e->run_in_bg)
+				put_job_in_foreground(ctx, job, 0);
+			else
+				put_job_in_background(ctx, job, 0);
+		} else {
+			wait_for_job(ctx, job);
 		}
+		job_get_status(job, &res->status);
 		break;
 	}
 	case EXPR_SUB:
@@ -1446,10 +1793,6 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	}
 
  out:
-	if (e->run_in_bg && bg_pid == 0) {
-		/* child */
-		exit(STATUS_TO_EXIT(res->status));
-	}
 	return;
 }
 
@@ -1551,8 +1894,14 @@ int run_interactive(struct input *in, int argc, const char** argv)
 
 	while (1) {
 	next_cmd:
+		do_job_notification(&exec);
 		printf("$ ");
 		in_read_line(in, src);
+		if (src->size == 0) {
+			L("read nothing");
+			exit(0);
+			goto next_cmd;
+		}
 		scanner_init(&scan);
 		scanner_refill(&scan, src->s, src->size);
 		if (parser)
