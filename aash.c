@@ -30,6 +30,37 @@ bool g_interactive = false;
 pid_t g_main_pid;
 struct termios g_term_modes;
 
+pid_t d_tcsetpgrp(const char *from, const char *sfd, int fd, const char *spgrp, pid_t pgrp)
+{
+	if (errno) {L("previous errno %d %s", errno, strerror(errno)); errno = 0;}
+	int r = tcsetpgrp(fd, pgrp);
+	L("in %-20.20s tcsetpgrp(%s<%d>, %s<%d>) = %d (%d %s)", from, sfd, fd, spgrp,
+	  pgrp, r, errno, errno?strerror(errno):"");
+	return r;
+#define tcsetpgrp(xfd, xpgrp) d_tcsetpgrp(__func__, #xfd, xfd, #xpgrp, xpgrp)
+}
+
+pid_t d_waitpid(const char *from, const char *spid, pid_t pid, const char *sstatus, int *status,
+		const char *sopts, int opts)
+{
+	if (errno) {L("previous errno %d %s", errno, strerror(errno)); errno = 0;}
+	pid_t r = waitpid(pid, status, opts);
+	L("in %-20.20s waitpid(%s<%d>, %s(%x), %s<%d>) = %d (%d %s)",
+	  from, spid, pid, sstatus, status, sopts, opts, r, errno, errno?strerror(errno):"");
+	return r;
+#define waitpid(xpid, xstatus, xopts) d_waitpid(__func__, #xpid, xpid, #xstatus, xstatus, #xopts, xopts)
+}
+
+pid_t d_setpgid(const char *from, const char *spid, pid_t pid, const char *spgrp, pid_t pgrp)
+{
+	if (errno) {L("previous errno %d %s", errno, strerror(errno)); errno = 0;}
+	int r = setpgid(pid, pgrp);
+	L("in %-20.20s setpgid(%s<%d>, %s<%d>) = %d (%d %s)", from, spid, pid, spgrp, pgrp,
+	  r, errno, errno?strerror(errno):"");
+	return r;
+#define setpgid(xpid, xpgrp) d_setpgid(__func__, #xpid, xpid, #xpgrp, xpgrp)
+}
+
 bool is_main_pid(void)
 {
 	return g_main_pid == getpid();
@@ -914,7 +945,7 @@ struct var_binding *exec_get_var_binding(struct exec_context *exec, const char *
 		return NULL;
 	}
 
-	L("name=<%s>", name);
+	//L("name=<%s>", name);
 
 	vars = is_func_var(name) ? exec_get_func_vars(exec) : &exec->vars;
 	for (i = 0; i < vars->size; i++) {
@@ -941,7 +972,7 @@ void exec_set_var_binding(struct exec_context *exec, const char *name, const cha
 		return;
 	}
 
-	L("name=<%s> val=<%s>", name, val);
+	//L("name=<%s> val=<%s>", name, val);
 
 	vars = is_func_var(name) ? exec_get_func_vars(exec) : &exec->vars;
 	v = exec_get_var_binding(exec, name);
