@@ -46,9 +46,17 @@ void log_write(const char *format, ...)
 	va_list args;
 
 	if (!g_log) {
+#ifdef LOG_FILE
 		g_log = fopen(LOG_FILE, "w+");
 		if (!g_log)
-			E("fopen");
+			E("fopen %s failed: %d %s", LOG_FILE, errno, strerror(errno));
+#else
+		if (dup2(2, 255) < 0)
+			E("dup2 2,255 errno %d %s", errno, strerror(errno));
+		g_log = fdopen(255, "w+");
+		if (!g_log)
+			E("fopen 255 errno %d %s", errno, strerror(errno));
+#endif
 	}
 
 	va_start(args, format);
