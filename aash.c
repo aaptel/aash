@@ -17,7 +17,7 @@
 #include "lex.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
-#define FAILED(s) (!WIFEXITED(s) || WEXITSTATUS(s) != 0)
+#define FAILED(s) (WIFSIGNALED(s) || (WIFEXITED(s) && WEXITSTATUS(s) != 0))
 #define STATUS_TO_EXIT(s) (WIFEXITED(s) ? WEXITSTATUS(s) : 1)
 
 #define MAX_VAR_NAME_SIZE 32
