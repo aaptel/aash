@@ -252,6 +252,7 @@ def test_braces():
     err += run_script('{ { echo a; } }', 'a\n', '', 0)
     err += run_script('{ { echo a; } ; { echo b; } }', 'a\nb\n', '', 0)
     err += run_script('{ { echo a; } ; { echo b; } }', 'a\nb\n', '', 0)
+    err += run_script('a=1 ; { a=2 ; } ; echo $a', '2\n', '', 0)
     if err > 0:
         raise MismatchError("%d mismatches"%err)
 
