@@ -118,8 +118,18 @@ int in_getc(struct input *in)
 		c = EOF;
 		in->nb_eof++;
 	} else {
-		if (in->type == INPUT_FILE)
+		if (in->type == INPUT_FILE) {
 			c = fgetc(in->fh);
+			if (c == EOF) {
+				if (feof(in->fh)) {
+					L("fh is eof");
+				}
+				if (ferror(in->fh)) {
+					L("fh has error (%d %s)", errno, strerror(errno));
+					errno = 0;
+				}
+			}
+		}
 		else {
 			if (in->s >= in->start + in->len)
 				c = EOF;
