@@ -339,17 +339,20 @@ void indent(int n)
 	} while (0)
 
 
+bool cmd_needs_redirect(struct cmd_redirect *c)
+{
+	return c->stdin.is_set || c->stdout.is_set || c->stderr.is_set;
+}
 void dump_cmd_redirect(struct cmd_redirect *c)
 {
-	bool printed_redir = false;
+	if (cmd_needs_redirect(c))
+			printf("REDIR ");
 
 	if (c->stdin.is_set) {
-		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		assert(!c->stdin.is_fd);
 		printf("stdin=%s ", c->stdin.fn->s);
 	}
 	if (c->stdout.is_set) {
-		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		printf("stdout=");
 		if (c->stdout.is_fd)
 			printf("fd%d ", c->stdout.fd);
@@ -357,7 +360,6 @@ void dump_cmd_redirect(struct cmd_redirect *c)
 			printf("fn<%s> ", c->stdout.fn->s);
 	}
 	if (c->stderr.is_set) {
-		if (!printed_redir) {printf("REDIR "); printed_redir = true;}
 		printf("stderr=");
 		if (c->stderr.is_fd)
 			printf("fd%d ", c->stderr.fd);
