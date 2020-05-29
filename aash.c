@@ -328,7 +328,10 @@ void indent(int n)
 #define IND_PRINT(n, fmt, ...) indent(n), printf(fmt, ##__VA_ARGS__)
 #define DUMP_BINARY(n, e, name, field)				\
 	do {							\
-		IND_PRINT(n, "%s {\n", name);			\
+		IND_PRINT(n, "%s ", name);			\
+		if (e->run_in_bg) printf(" (in bg) ");		\
+		dump_cmd_redirect(&e->redir);			\
+		printf(" {\n");					\
 		IND_PRINT(n+1, "left {\n");			\
 		dump_expr(e->field.left, n+2, graphviz);	\
 		IND_PRINT(n+1, "}\n");				\
@@ -377,12 +380,12 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		return;
 	}
 
-	if (e->run_in_bg) { IND_PRINT(n, "(in bg) "); }
-	dump_cmd_redirect(&e->redir);
-
 	switch (e->type) {
 	case EXPR_PROG:
-		IND_PRINT(n, "PROG {\n");
+		IND_PRINT(n, "PROG");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
+		printf(" {\n");
 		for (i = 0; i < e->prog.size; i++)
 			dump_expr(e->prog.cmds[i], n+1, graphviz);
 		IND_PRINT(n, "}\n");
@@ -394,7 +397,10 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		DUMP_BINARY(n, e, "OR", and_or);
 		break;
 	case EXPR_PIPE:
-		IND_PRINT(n, "PIPE {\n");
+		IND_PRINT(n, "PIPE ");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
+		printf(" {\n");
 		for (i = 0; i < e->pipe.size; i++)
 			dump_expr(e->pipe.cmds[i], n+1, graphviz);
 		IND_PRINT(n, "}\n");
@@ -403,15 +409,22 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		IND_PRINT(n, "CMD ");
 		for (i = 0; i < e->simple_cmd.size; i++)
 			printf("<%s> ", e->simple_cmd.words[i]->s);
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
 		putchar('\n');
 		break;
 	case EXPR_NOT:
-		IND_PRINT(n, "NOT {\n");
+		IND_PRINT(n, "NOT ");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
+		printf(" {\n");
 		dump_expr(e->not.expr, n+1, graphviz);
 		IND_PRINT(n, "}\n");
 		break;
 	case EXPR_SUB:
 		IND_PRINT(n, "SUBSHELL ");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
 		printf(" {\n");
 		dump_expr(e->sub.expr, n+1, graphviz);
 		IND_PRINT(n, "}\n");
@@ -420,7 +433,9 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		IND_PRINT(n, "FOR %s IN ", e->efor.name->s);
 		for (i = 0; i < e->efor.size; i++)
 			printf("<%s> ", e->efor.words[i]->s);
-		printf("{\n");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
+		printf(" {\n");
 		dump_expr(e->efor.body, n+1, graphviz);
 		IND_PRINT(n, "}\n");
 		break;
@@ -430,7 +445,10 @@ void dump_expr(struct expr *e, int n, bool graphviz)
 		IND_PRINT(n, "}\n");
 		break;
 	case EXPR_IF:
-		IND_PRINT(n, "IF {\n");
+		IND_PRINT(n, "IF ");
+		if (e->run_in_bg) printf(" (in bg) ");
+		dump_cmd_redirect(&e->redir);
+		printf(" {\n");
 		IND_PRINT(n+1, "TEST {\n");
 		dump_expr(e->eif.test, n+2, graphviz);
 		IND_PRINT(n+1, "}\n");
