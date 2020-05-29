@@ -366,7 +366,7 @@ class Result:
             '^=== RUNNING ===\n(.*)^RESULT = (\d+) \(exit code=(\d+)\)',
             self.stdout, flags=re.M|re.S)
         if not m:
-            raise OutputError('no running section in output', sp_res)
+            raise OutputError('no running section in output', script, sp_res)
         self.scriptout = m.group(1)
         self.scriptstatus = int(m.group(2))
         self.scriptrc = int(m.group(3))
@@ -400,6 +400,7 @@ class OutputError(TestException):
     def __init__(self, message, script, result):
         super().__init__(message)
         self.result = result
+        self.script = script
     def __str__(self):
         return "%s: %s\n%s\n%s"%(super().__str__(),self.script,self.result.stdout,self.result.stderr)
 class ExitError(TestException):
