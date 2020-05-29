@@ -565,7 +565,6 @@ struct exec_context {
 	} *jobs;
 
 	bool interactive;
-	bool forked_from_pipe;
 };
 
 void wait_for_job(struct exec_context *exec, struct job *j);
@@ -942,7 +941,7 @@ bool is_func_var(const char *s)
 	return strchr("@*#", *s);
 }
 
-void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res);
+void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res, bool forked_from_pipe);
 
 struct vars *exec_get_func_vars(struct exec_context *exec)
 {
@@ -1339,7 +1338,8 @@ const char* expand_push_subshell(struct exec_context *exec, struct expand_contex
 		exec_set_var_binding_fmt(exec, "$", "%d", getpid());
 		close(pipefd[0]);
 		dup2(pipefd[1], 1);
-		exec_expr(root, exec, &res);
+		g_interactive = false;
+		exec_expr(root, exec, &res, false);
 		exit(STATUS_TO_EXIT(res.status));
 	}
 
@@ -1617,7 +1617,7 @@ void exec_func_call(struct exec_context *exec, struct expr *func, struct expr *e
 	}
 	exec_set_var_binding_fmt(exec, "#", "%d", expd.size-1);
 
-	exec_expr(func->func.body, exec, res);
+	exec_expr(func->func.body, exec, res, false);
 
 	/*
 	 * Pop positional arguments
@@ -1653,7 +1653,7 @@ void exec_job_child_setup(struct expr *e, struct exec_context *exec, struct job 
 	}
 }
 
-void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res)
+void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res, bool forked_from_pipe)
 {
 	int i;
 	pid_t rcpid;
@@ -1665,10 +1665,10 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 	assert(e);
 
-	if (ctx->forked_from_pipe)
+	if (forked_from_pipe)
 		exit_on_finish = true;
 
-	if (e->type != EXPR_PIPE && (e->run_in_bg || e->type == EXPR_SUB) && !ctx->forked_from_pipe) {
+	if (e->type != EXPR_PIPE && (e->run_in_bg || e->type == EXPR_SUB) && !forked_from_pipe) {
 		job = job_new(ctx);
 		rcpid = fork();
 		if (rcpid < 0)
@@ -1693,7 +1693,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	switch (e->type) {
 	case EXPR_PROG:
 		for (i = 0; i < e->prog.size; i++)
-			exec_expr(e->prog.cmds[i], ctx, res);
+			exec_expr(e->prog.cmds[i], ctx, res, false);
 		break;
 	case EXPR_SIMPLE_CMD: {
 		/* simple cmd is also used for assignments... */
@@ -1715,7 +1715,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			goto out;
 		}
 
-		if (!ctx->forked_from_pipe && !forked) {
+		if (!forked_from_pipe && !forked) {
 			job = job_new(ctx);
 			rcpid = fork();
 			if (rcpid < 0)
@@ -1742,33 +1742,33 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		break;
 	case EXPR_AND:
 		/* run left, stop if failure */
-		exec_expr(e->and_or.left, ctx, res);
+		exec_expr(e->and_or.left, ctx, res, false);
 		if (FAILED(res->status))
 			goto out;
 		/* run right, stop if failure */
-		exec_expr(e->and_or.right, ctx, res);
+		exec_expr(e->and_or.right, ctx, res, false);
 		if (FAILED(res->status))
 			goto out;
 		break;
 	case EXPR_OR:
 		/* run left, stop if success */
-		exec_expr(e->and_or.left, ctx, res);
+		exec_expr(e->and_or.left, ctx, res, false);
 		if (!FAILED(res->status))
 			goto out;
 		/* run right, stop if success */
-		exec_expr(e->and_or.right, ctx, res);
+		exec_expr(e->and_or.right, ctx, res, false);
 		if (!FAILED(res->status))
 			goto out;
 		break;
 	case EXPR_NOT:
 		/* inverse failure and success */
-		exec_expr(e->not.expr, ctx, res);
+		exec_expr(e->not.expr, ctx, res, false);
 		res->status = W_EXITCODE(!STATUS_TO_EXIT(res->status), 0);
 		break;
 	case EXPR_PIPE:
 	{
 		struct pipe_pairs *pipes = pipe_pairs_new(e->pipe.size-1);
-		struct job *job = job_new(ctx);
+		job = job_new(ctx);
 		L("new job %p", job);
 
 		for (i = 0; i < e->pipe.size; i++) {
@@ -1784,7 +1784,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 
 			if (rcpid == 0) {
 				/* child */
-				ctx->forked_from_pipe = true;
+				forked_from_pipe = true;
 				exec_job_child_setup(e, ctx, job);
 				if (i-1 >= 0)
 					dup2(pipe_pairs_get(pipes, i-1, 0), 0);
@@ -1793,7 +1793,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 				pipe_pairs_free(pipes);
 				exec_apply_redir(&e->redir);
 				exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-				exec_expr(e->pipe.cmds[i], ctx, res);
+				exec_expr(e->pipe.cmds[i], ctx, res, true);
 				exit(STATUS_TO_EXIT(res->status));
 			}
 			job_add_proc(job, rcpid, sube);
@@ -1805,7 +1805,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_SUB:
 	{
 		// already forked at beginning of function
-		exec_expr(e->sub.expr, ctx, res);
+		exec_expr(e->sub.expr, ctx, res, false);
 		exit(STATUS_TO_EXIT(res->status));
 		break;
 	}
@@ -1817,7 +1817,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		for (i = 0; i < expd.size; i++) {
 			L("expanded <%s>", expd.words[i]->s);
 			exec_set_var_binding(ctx, e->efor.name->s, expd.words[i]->s);
-			exec_expr(e->efor.body, ctx, res);
+			exec_expr(e->efor.body, ctx, res, false);
 		}
 		FREE_ARRAY(&expd, words, str_free);
 		break;
@@ -1827,11 +1827,11 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 		res->status = 0;
 		break;
 	case EXPR_IF:
-		exec_expr(e->eif.test, ctx, res);
+		exec_expr(e->eif.test, ctx, res, false);
 		if (FAILED(res->status))
-			exec_expr(e->eif.xelse, ctx, res);
+			exec_expr(e->eif.xelse, ctx, res, false);
 		else
-			exec_expr(e->eif.xthen, ctx, res);
+			exec_expr(e->eif.xthen, ctx, res, false);
 		break;
 	default:
 		E("TODO");
@@ -2000,7 +2000,7 @@ int run_interactive(struct input *in, int argc, const char** argv)
 		}
 
 
-		exec_expr(root, &exec, &res);
+		exec_expr(root, &exec, &res, false);
 
 		if (g_debug) {
 			printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
@@ -2076,7 +2076,7 @@ int run_script(struct input *in, int argc, const char** argv)
 		exec_set_var_binding(&exec, name, argv[i]);
 	}
 	exec_set_var_binding_fmt(&exec, "#", "%d", argc-1);
-	exec_expr(root, &exec, &res);
+	exec_expr(root, &exec, &res, false);
 
 	if (g_debug) {
 		printf("RESULT = %d (exit code=%d)\n", res.status, WEXITSTATUS(res.status));
