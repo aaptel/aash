@@ -23,11 +23,14 @@ simple test shell implementing a POSIXish sh as an exercise.
   - some specials vars ($0 $1 $2 $# $$)
 
 * interative mode
-  - read multi-line commands (PS1/PS2)
+  - read multi-line commands (PS1/PS2 (not redefinable))
   - job control with signals and process groups (ctrl-c, ctrl-z, fg, bg)
 
 * unsupported stuff so far:
-  - not all compounded commands (while,until,case,...)
+  - missing some compounded commands (while,until,case,...)
+  - missing some builtins (shift, read, getopts...)
+  - var expansion parameters ${var:-x} ...
+  - no glob expansions ( *.c *.[ch] ~/foo )
   - arithmetic expression $(( 42*10+foo ))
 
 build
