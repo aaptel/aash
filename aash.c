@@ -1805,6 +1805,7 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	case EXPR_SUB:
 	{
 		// already forked at beginning of function
+		exec_apply_redir(&e->redir);
 		exec_expr(e->sub.expr, ctx, res, false);
 		exit(STATUS_TO_EXIT(res->status));
 		break;
