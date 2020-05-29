@@ -9,7 +9,7 @@ simple test shell implementing a POSIXish sh as an exercise.
   - and (a && b)
   - or (a || b)
   - not (!a)
-  - basic quoting ("foo bar", 'baz zblerx')
+  - quoting ("foo bar", 'baz zblerx', a"x$(foo $(bar))x"'foo')
   - pipes (a | b)
   - redirections (a > b; a 2>&1; a < b; a >> b)
   - subshells ( (a;b) )
@@ -28,35 +28,35 @@ simple test shell implementing a POSIXish sh as an exercise.
 
 * unsupported stuff so far:
   - not all compounded commands (while,until,case,...)
-  - handle bg jobs and redir in more expressions
+  - arithmetic expression $(( 42*10+foo ))
 
 build
 =====
 
+aash should only depend on a c11 compiler and the system libc (only tested with gcc and glibc)
+
     $ make
+
+testing
+=======
+
+you can run the test suite to check aash works or to see its supported features.
+the test suite requires python3.
+
+    $ python3 test.py -v
 
 usage
 =====
 
-    # sample script
-    $ echo '( echo aa && echo ab && echo bb ) | grep a | grep b > file ; cat file
-            ( sleep 5 ; echo done ) &
-            echo wait
-            wait
-            echo exiting
-    ' > test.sh
-    # run it
-    $ ./aash --debug < test.sh
+    $ ./aash --debug -c '( echo aa ; echo ab ; echo bb ) | grep a | grep b > file; echo "result=$(cat file)"'
     === LEXING ===
-    TOK: NEWLINE
-    TOK: NEWLINE
     TOK: LPAREN (
     TOK: WORD <echo>
     TOK: WORD <aa>
-    TOK: AND
+    TOK: SEMICOL ;
     TOK: WORD <echo>
     TOK: WORD <ab>
-    TOK: AND
+    TOK: SEMICOL ;
     TOK: WORD <echo>
     TOK: WORD <bb>
     TOK: RPAREN )
@@ -69,87 +69,26 @@ usage
     TOK: REDIR >
     TOK: WORD <file>
     TOK: SEMICOL ;
-    TOK: WORD <cat>
-    TOK: WORD <file>
-    TOK: NEWLINE
-    TOK: LPAREN (
-    TOK: WORD <sleep>
-    TOK: WORD <5>
-    TOK: SEMICOL ;
     TOK: WORD <echo>
-    TOK: WORD <done>
-    TOK: RPAREN )
-    TOK: BG &
+    TOK: WORD <"result=$(cat file)">
     TOK: NEWLINE
-    TOK: WORD <echo>
-    TOK: WORD <wait>
-    TOK: NEWLINE
-    TOK: WORD <wait>
-    TOK: NEWLINE
-    TOK: WORD <echo>
-    TOK: WORD <exiting>
-    TOK: NEWLINE
-    TOK: NONE
     === PARSING ===
     PROG {
       PROG {
-        PIPE {
-          left {
-            PIPE {
-              left {
-                SUBSHELL REDIR  {
-                  PROG {
-                    AND {
-                      left {
-                        AND {
-                          left {
-                            CMD <echo> <aa> REDIR 
-                          }
-                          right {
-                            CMD <echo> <ab> REDIR 
-                          }
-                        }
-                      }
-                      right {
-                        CMD <echo> <bb> REDIR 
-                      }
-                    }
-                  }
-                }
-              }
-              right {
-                CMD <grep> <a> REDIR 
-              }
+        PIPE  {
+          SUBSHELL  {
+            PROG {
+              CMD <echo> <aa> 
+              CMD <echo> <ab> 
+              CMD <echo> <bb> 
             }
           }
-          right {
-            CMD <grep> <b> REDIR stdout=fn<file> 
-          }
+          CMD <grep> <a> 
+          CMD <grep> <b> REDIR stdout=fn<file> 
         }
-        CMD <cat> <file> REDIR 
-      }
-      PROG {
-        (in bg)     SUBSHELL REDIR  {
-          PROG {
-            CMD <sleep> <5> REDIR 
-            CMD <echo> <done> REDIR 
-          }
-        }
-      }
-      PROG {
-        CMD <echo> <wait> REDIR 
-      }
-      PROG {
-        CMD <wait> REDIR 
-      }
-      PROG {
-        CMD <echo> <exiting> REDIR 
+        CMD <echo> <"result=$(cat file)"> 
       }
     }
     === RUNNING ===
-    ab
-    wait
-    done
-    exiting
+    result=ab
     RESULT = 0 (exit code=0)
-
