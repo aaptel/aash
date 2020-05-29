@@ -651,6 +651,13 @@ bool job_is_completed(struct job *j)
 
 void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont)
 {
+	if (!g_interactive) {
+		if (cont)
+			E("invalid state");
+		wait_for_job(exec, j);
+		return;
+	}
+
 	L("pgid=%ld", (long)j->pgid);
 
 	/* Put the job into the foreground.  */
@@ -682,6 +689,13 @@ void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont)
 void put_job_in_background(struct exec_context *exec, struct job *j, int cont)
 {
 	L("");
+
+	if (!g_interactive) {
+		if (cont)
+			E("invalid state");
+		return;
+	}
+
 	/* Send the job a continue signal, if necessary.  */
 	if (cont)
 		if (kill(-j->pgid, SIGCONT) < 0)
@@ -799,7 +813,8 @@ void do_job_notification(struct exec_context *exec)
 		/* If all processes have completed, tell the user the job has
 		   completed and delete it from the list of active jobs.  */
 		if (job_is_completed(j)) {
-			format_job_info(j, "completed");
+			if (g_interactive)
+				format_job_info(j, "completed");
 			if (jlast)
 				jlast->next = jnext;
 			else
@@ -810,7 +825,8 @@ void do_job_notification(struct exec_context *exec)
 		/* Notify the user about stopped jobs,
 		   marking them so that we won't do this more than once.  */
 		else if (job_is_stopped(j) && !j->notified) {
-			format_job_info(j, "stopped");
+			if (g_interactive)
+				format_job_info(j, "stopped");
 			j->notified = 1;
 			jlast = j;
 		}
@@ -1643,8 +1659,36 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	pid_t rcpid;
 	builtin_func_t builtin;
 	struct expr *func;
+	struct job *job;
+	bool exit_on_finish = false;
+	bool forked = false;
 
 	assert(e);
+
+	if (ctx->forked_from_pipe)
+		exit_on_finish = true;
+
+	if (e->type != EXPR_PIPE && (e->run_in_bg || e->type == EXPR_SUB) && !ctx->forked_from_pipe) {
+		job = job_new(ctx);
+		rcpid = fork();
+		if (rcpid < 0)
+			E("fork");
+		forked = true;
+		job->pgid = rcpid;
+		if (rcpid == 0) {
+			// child
+			forked = false;
+			exit_on_finish = true;
+			exec_job_child_setup(e, ctx, job);
+			exec_apply_redir(&e->redir);
+			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
+		}
+		if (rcpid > 0) {
+			// parent
+			job_add_proc(job, rcpid, e);
+			goto out;
+		}
+	}
 
 	switch (e->type) {
 	case EXPR_PROG:
@@ -1671,41 +1715,29 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			goto out;
 		}
 
-		if (ctx->forked_from_pipe) {
-			/* dont fork again if from pipe */
-			L("exec no fork");
-			exec_cmd(e, ctx);
-			exit(1);
+		if (!ctx->forked_from_pipe && !forked) {
+			job = job_new(ctx);
+			rcpid = fork();
+			if (rcpid < 0)
+				E("fork");
+			forked = true;
+			job->pgid = rcpid;
+			if (rcpid == 0) {
+				// child
+				forked = false;
+				exit_on_finish = true;
+				exec_job_child_setup(e, ctx, job);
+				exec_apply_redir(&e->redir);
+				exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
+			} else {
+				// parent
+				job_add_proc(job, rcpid, e);
+				goto out;
+			}
 		}
-
-		struct job *job = job_new(ctx);
-		L("new job %p", job);
-
-		/* otherwise fork & exec */
-		res->pid = fork();
-		if (res->pid < 0)
-			E("fork");
-
-		job->pgid = res->pid ? res->pid : getpid();
-		if (res->pid == 0) {
-			/* child */
-			exec_job_child_setup(e, ctx, job);
-			exec_cmd(e, ctx);
-			/* should never return */
-			exit(1);
-		}
-
-		job_add_proc(job, res->pid, e);
-
-		if (g_interactive) {
-			if (e->run_in_bg)
-				put_job_in_background(ctx, job, 0);
-			else
-				put_job_in_foreground(ctx, job, 0);
-		} else {
-			wait_for_job(ctx, job);
-		}
-		job_get_status(job, &res->status);
+		exec_cmd(e, ctx);
+		// never returns
+		exit(1);
 	}
 		break;
 	case EXPR_AND:
@@ -1767,34 +1799,14 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 			job_add_proc(job, rcpid, sube);
 		}
 		pipe_pairs_free(pipes);
-
-		if (g_interactive) {
-			if (!e->run_in_bg)
-				put_job_in_foreground(ctx, job, 0);
-			else
-				put_job_in_background(ctx, job, 0);
-		} else {
-			wait_for_job(ctx, job);
-		}
-		job_get_status(job, &res->status);
+		forked = true;
 		break;
 	}
 	case EXPR_SUB:
 	{
-		pid_t child = fork();
-		if (child < 0)
-			E("fork");
-
-		if (child == 0) {
-			exec_set_var_binding_fmt(ctx, "$", "%d", getpid());
-			exec_apply_redir(&e->redir);
-			exec_expr(e->sub.expr, ctx, res);
-			exit(STATUS_TO_EXIT(res->status));
-		}
-
-		rcpid = waitpid(child, &res->status, 0);
-		if (rcpid < 0)
-			E("waitpid");
+		// already forked at beginning of function
+		exec_expr(e->sub.expr, ctx, res);
+		exit(STATUS_TO_EXIT(res->status));
 		break;
 	}
 	case EXPR_FOR:
@@ -1826,6 +1838,19 @@ void exec_expr(struct expr *e, struct exec_context *ctx, struct exec_result *res
 	}
 
  out:
+
+	if (forked) {
+		if (e->run_in_bg)
+			put_job_in_background(ctx, job, 0);
+		else {
+			put_job_in_foreground(ctx, job, 0);
+		}
+		job_get_status(job, &res->status);
+	}
+
+	if (exit_on_finish)
+		exit(STATUS_TO_EXIT(res->status));
+
 	return;
 }
 
