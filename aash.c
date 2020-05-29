@@ -562,6 +562,7 @@ struct exec_context {
 		pid_t pgid;                 /* process group ID */
 		struct termios tmodes;      /* saved terminal modes */
 		bool notified;              /* true if user told about stopped job */
+		bool fg;                    /* true if job was in foreground */
 	} *jobs;
 
 	bool interactive;
@@ -592,7 +593,9 @@ void job_add_proc(struct job *job, pid_t pid, struct expr *expr)
 /* Format information about job status for the user to look at.  */
 void format_job_info(struct job *j, const char *status)
 {
-	fprintf(stderr, "%ld (%s)\n", (long)j->pgid, status);
+	if (!g_interactive || j->fg)
+		return;
+	fprintf(stderr, "job %ld (%s)\n", (long)j->pgid, status);
 }
 
 
@@ -650,6 +653,8 @@ bool job_is_completed(struct job *j)
 
 void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont)
 {
+	j->fg = true;
+
 	if (!g_interactive) {
 		if (cont)
 			E("invalid state");
@@ -688,6 +693,8 @@ void put_job_in_foreground(struct exec_context *exec, struct job *j, int cont)
 void put_job_in_background(struct exec_context *exec, struct job *j, int cont)
 {
 	L("");
+
+	j->fg = false;
 
 	if (!g_interactive) {
 		if (cont)
@@ -812,8 +819,7 @@ void do_job_notification(struct exec_context *exec)
 		/* If all processes have completed, tell the user the job has
 		   completed and delete it from the list of active jobs.  */
 		if (job_is_completed(j)) {
-			if (g_interactive)
-				format_job_info(j, "completed");
+			format_job_info(j, "completed");
 			if (jlast)
 				jlast->next = jnext;
 			else
@@ -824,8 +830,7 @@ void do_job_notification(struct exec_context *exec)
 		/* Notify the user about stopped jobs,
 		   marking them so that we won't do this more than once.  */
 		else if (job_is_stopped(j) && !j->notified) {
-			if (g_interactive)
-				format_job_info(j, "stopped");
+			format_job_info(j, "stopped");
 			j->notified = 1;
 			jlast = j;
 		}
